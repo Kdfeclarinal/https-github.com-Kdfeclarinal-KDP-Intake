@@ -1,0 +1,5 @@
+# Generated dependency directory
+node_modules/
+
+# Playwright MCP working dir (test artifacts from browser verification)
+.playwright-mcp/

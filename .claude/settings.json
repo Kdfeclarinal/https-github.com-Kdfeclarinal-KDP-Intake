@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "Bash(git --no-pager diff -- tests/v3-fail-diagnostic.test.js)",
+      "Bash(git --no-pager log --oneline -20)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/MYPC/.local/bin/graphify.EXE hook-guard search"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/Users/MYPC/.local/bin/graphify.EXE hook-guard read"
+          }
+        ]
+      }
+    ]
+  }
+}
