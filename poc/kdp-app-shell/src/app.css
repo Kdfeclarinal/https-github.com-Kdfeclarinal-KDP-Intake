@@ -41,6 +41,39 @@ body {
   border-radius: 999px;
 }
 
+.kdp-b1 {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e4eaf1;
+}
+
+.kdp-b1__label {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #334e68;
+}
+
+.kdp-b1--success .kdp-b1__label {
+  color: #2f855a;
+}
+
+.kdp-b1--error .kdp-b1__label {
+  color: #c53030;
+}
+
+.kdp-b1__hint,
+.kdp-b1__status,
+.kdp-b1__row {
+  margin: 0.25rem 0;
+  font-size: 0.9rem;
+  color: #486581;
+}
+
+.kdp-b1__row {
+  font-weight: 500;
+}
+
 @media (max-width: 480px) {
   .kdp-shell {
     margin: 1rem;
