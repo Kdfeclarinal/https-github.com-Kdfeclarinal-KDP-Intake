@@ -1,26 +1,17 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import './app.css';
-
-// Stage A shell — unchanged.
-function Shell({ children }) {
-  return React.createElement(
-    'section',
-    { className: 'kdp-shell' },
-    React.createElement('h1', { className: 'kdp-shell__title' }, 'KDP App Shell POC'),
-    React.createElement('p', { className: 'kdp-shell__status' }, 'React mounted successfully.'),
-    React.createElement('p', { className: 'kdp-shell__mount' }, 'Mount status: Ready'),
-    children
-  );
-}
+import { DetailsPage } from './details/DetailsPage.jsx';
 
 // Stage B1: ONE protected employee read via the existing loadEmployeePage Edge Function.
 // READ ONLY. No write, no storage, no new dependency.
 const READ_ENDPOINT = 'https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/loadEmployeePage';
 
-function StageB1() {
-  const [state, setState] = React.useState('loading'); // loading | success | error | missing
-  const [safe, setSafe] = React.useState({});
+function useProtectedEmployeeRead() {
+  // 'loading' | 'missing' | 'success' | 'error'
+  const [state, setState] = React.useState('loading');
+  const [book, setBook] = React.useState(null);
+  const [stepName, setStepName] = React.useState(null);
   const [httpStatus, setHttpStatus] = React.useState(null);
   const called = React.useRef(false);
 
@@ -49,12 +40,8 @@ function StageB1() {
           // Success requires a real 2xx response, the backend's own ok flag, and a book payload.
           // Never trust only the browser; never let a blank display field fail the read.
           if (ok === true && data && data.ok === true && data.book) {
-            setSafe({
-              title: data.book.book_title || 'Not set',
-              status: data.book.overall_status,
-              step: data.book.current_employee_step,
-              stepName: data.step_name,
-            });
+            setBook(data.book);
+            setStepName(data.step_name || null);
             setState('success');
           } else {
             setState('error');
@@ -64,53 +51,51 @@ function StageB1() {
     }
   }
 
+  return { state, book, stepName, httpStatus };
+}
+
+function ProtectedReadGate() {
+  const { state, book, stepName, httpStatus } = useProtectedEmployeeRead();
+
   if (state === 'missing') {
     return React.createElement(
       'div',
-      { className: 'kdp-b1 kdp-b1--missing' },
-      React.createElement('p', { className: 'kdp-b1__label' }, 'Protected read not started.'),
+      { className: 'kdp-msg kdp-msg--missing' },
+      React.createElement('p', { className: 'kdp-msg__label' }, 'Protected read not started.'),
       React.createElement(
         'p',
-        { className: 'kdp-b1__hint' },
+        { className: 'kdp-msg__hint' },
         'Open this staging page with the disposable test book parameters.'
       )
     );
   }
 
   if (state === 'loading') {
-    return React.createElement('p', { className: 'kdp-b1__label' }, 'Protected read: Loading…');
+    return React.createElement('p', { className: 'kdp-msg__label' }, 'Protected read: Loading…');
   }
 
   if (state === 'error') {
     return React.createElement(
       'div',
-      { className: 'kdp-b1 kdp-b1--error' },
-      React.createElement('p', { className: 'kdp-b1__label' }, 'Protected read: Failed'),
+      { className: 'kdp-msg kdp-msg--error' },
+      React.createElement('p', { className: 'kdp-msg__label' }, 'Protected read: Failed'),
       React.createElement(
         'p',
-        { className: 'kdp-b1__hint' },
+        { className: 'kdp-msg__hint' },
         'The test book could not be loaded with this access context.'
       ),
       httpStatus
-        ? React.createElement('p', { className: 'kdp-b1__status' }, 'HTTP status: ' + httpStatus)
+        ? React.createElement('p', { className: 'kdp-msg__status' }, 'HTTP status: ' + httpStatus)
         : null
     );
   }
 
-  // success — render only useful non-sensitive fields.
-  return React.createElement(
-    'div',
-    { className: 'kdp-b1 kdp-b1--success' },
-    React.createElement('p', { className: 'kdp-b1__label' }, 'Protected read: Success'),
-    safe.title ? React.createElement('p', { className: 'kdp-b1__row' }, 'Book: ' + safe.title) : null,
-    safe.status ? React.createElement('p', { className: 'kdp-b1__row' }, 'Status: ' + safe.status) : null,
-    safe.step ? React.createElement('p', { className: 'kdp-b1__row' }, 'Step: ' + safe.step) : null,
-    safe.stepName ? React.createElement('p', { className: 'kdp-b1__row' }, 'Step name: ' + safe.stepName) : null
-  );
+  // success — hydrate the Details form from the protected payload.
+  return React.createElement(DetailsPage, { book, stepName });
 }
 
 function App() {
-  return React.createElement(Shell, null, React.createElement(StageB1));
+  return React.createElement(ProtectedReadGate);
 }
 
 // Smallest reliable idempotency guard: a module-level boolean.
