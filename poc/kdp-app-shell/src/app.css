@@ -100,6 +100,18 @@ body {
   color: #99a0a3;
 }
 
+.kdp-progress-item.is-clickable {
+  cursor: pointer;
+}
+
+.kdp-progress-item.is-clickable:hover {
+  border-color: var(--kdp-border);
+}
+
+.kdp-progress-item.is-locked {
+  cursor: not-allowed;
+}
+
 /* Sections — individual white bands on the gray canvas ---------------- */
 .kdp-section {
   display: grid;
@@ -425,7 +437,10 @@ body {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows 560ms cubic-bezier(.2, .8, .2, 1), opacity 420ms ease;
+  /* Native KDP accordion is JS-driven, ~300ms ease-in-out (measured
+     6135ms->6435ms). Match its perceived motion: 300ms grid rows with a
+     symmetric ease-in-out curve, 200ms opacity fade. */
+  transition: grid-template-rows 300ms cubic-bezier(.42, 0, .58, 1), opacity 200ms ease;
 }
 
 .kdp-preorder-extra.is-open {
@@ -440,7 +455,7 @@ body {
 }
 
 .kdp-preorder-extra.is-open .kdp-preorder-extra-inner {
-  padding: 0 16px 14px 40px;
+  padding: 12px 16px 14px 40px;
 }
 
 .kdp-preorder-date {
@@ -498,6 +513,7 @@ body {
 
 .kdp-field--role {
   flex: 0 0 170px !important;
+  margin-bottom: 0; /* align the role dropdown with the first/last name inputs */
 }
 
 /* Icons --------------------------------------------------------------- */
@@ -1362,6 +1378,339 @@ body {
   color: #6f7679;
 }
 
+.kdp-note--ok {
+  color: #008a00;
+  font-weight: 600;
+}
+
+.kdp-note--error {
+  color: var(--kdp-error);
+  font-weight: 600;
+}
+
+/* Content page — dynamic book title header ----------------------------- */
+.kdp-book-title {
+  margin: 20px 26px 4px;
+  padding: 0;
+  font-size: 21px;
+  line-height: 1.3;
+  font-weight: 700;
+  color: var(--kdp-text);
+}
+
+/* Content footer: a right-side cluster holding Save Draft + Continue, so the
+   "Back to Details" button can sit on the far left of the same row. */
+.kdp-actions__group {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+/* "Next step: ..." label centred directly beneath the Save and Continue
+   button. The wrapper spans the button's width (flex column), so the div box
+   right-edges with the button; the label is text-centred within it. */
+.kdp-actions__primary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.kdp-actions__next {
+  width: 100%;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--kdp-muted);
+}
+
+/* Content bottom nav (Draft / Continue) — space-between ---------------- */
+.kdp-actions--nav {
+  justify-content: space-between;
+}
+
+/* Content upload buttons (Manuscript) — native control sizing
+   (match the approved Details buttons: 15px text, comfortable height). */
+.kdp-btn--upload {
+  height: 38px;
+  padding: 0 22px;
+  font-size: 15px;
+}
+
+/* Review Uploaded Files buttons (View Manuscript / View Cover) — same
+   native KDP yellow-button look as the old Launch Previewer, sized to
+   comfortably fit the longer label. Currently rendered disabled until
+   the real persisted file + view URL contract is captured. */
+.kdp-btn--review {
+  height: 38px;
+  padding: 0 22px;
+  font-size: 15px;
+  min-width: 160px;
+}
+
+/* Row holding the two View buttons. Same general area the single
+   Launch Previewer button used to occupy. */
+.kdp-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0 0;
+}
+
+/* Anchor styled as a yellow button (Launch Cover Creator, View Manuscript,
+   View Cover) — never rendered as an underlined link in any state, with a
+   normal button focus ring. Inline-flex + centered text so the anchor
+   visually matches the native <button> yellow button, byte-for-byte on
+   height, padding, and content alignment. */
+a.kdp-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+a.kdp-btn:hover,
+a.kdp-btn:visited,
+a.kdp-btn:active,
+a.kdp-btn:focus {
+  text-decoration: none;
+}
+
+.kdp-upload-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--kdp-muted);
+}
+
+.kdp-upload-note--ok {
+  color: #008a00;
+  font-weight: 600;
+}
+
+/* Cover selector card (bordered; two adjoining option rows) ------------ */
+.kdp-cover-card {
+  border: 1px solid #d5d9d9;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.kdp-cover-option {
+  padding: 12px 16px;
+  background: #f0f2f2;
+}
+
+.kdp-cover-option.is-selected {
+  background: #ffffff;
+}
+
+.kdp-cover-divider {
+  height: 1px;
+  background: #d5d9d9;
+}
+
+.kdp-cover-option .kdp-radio {
+  margin-top: 1px;
+  font-weight: 400;
+}
+
+.kdp-cover-option .kdp-option-title {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--kdp-text);
+}
+
+.kdp-cover-option.is-selected .kdp-option-title {
+  font-weight: 700;
+}
+
+/* Cover "Cover Creator" body — horizontal layout: vertical cover thumbnail
+   placeholder on the left, yellow Launch Cover Creator button beside it
+   (upper-middle), matching the native KDP cover selector. */
+.kdp-cover-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  margin-top: 14px;
+  padding: 2px 0 0;
+}
+
+/* Vertical cover thumbnail placeholder (small portrait book aspect), NOT the
+   full-width horizontal dashed box. */
+.kdp-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 70px;
+  height: 110px;
+  margin-bottom: 0;
+  padding: 6px;
+  border: 1px dashed #b8bcbc;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--kdp-muted);
+  text-align: center;
+}
+
+/* Cover thumbnail — same 70x110 footprint as the dashed placeholder, so a
+   successful upload swaps the placeholder for the image without re-flowing
+   the cover row. White background keeps transparent PNGs visible; object-fit:
+   contain prevents any crop. On image error we fall back to the dashed
+   placeholder via .kdp-cover-thumb--failed (hides the broken image and shows
+   the sibling placeholder). */
+.kdp-cover-thumb {
+  display: block;
+  flex: none;
+  width: 70px;
+  height: 110px;
+  margin-bottom: 0;
+  padding: 0;
+  border: 1px solid #d6d8d8;
+  border-radius: 8px;
+  background: #ffffff;
+  object-fit: contain;
+}
+
+.kdp-cover-thumb--failed {
+  display: none;
+}
+
+.kdp-cover-thumb--hidden {
+  display: none;
+}
+
+/* Launch Cover Creator / Upload cover — compact native yellow button (not the
+   oversized upload/preview size), tucked beside the thumbnail at about its
+   upper-middle (native placement). */
+.kdp-btn--cover {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 15px;
+  font-size: 15px;
+  white-space: nowrap;
+  margin-top: 26px;
+}
+
+/* Cover "upload" expandable panel — mirrors the approved pre-order
+   accordion animation (300ms grid rows, 200ms opacity, overflow hidden,
+   reduced-motion respected). */
+.kdp-cover-extra {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 300ms cubic-bezier(.42, 0, .58, 1), opacity 200ms ease;
+}
+
+.kdp-cover-extra.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.kdp-cover-extra-inner {
+  overflow: hidden;
+  min-height: 0;
+  padding: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+.kdp-cover-extra.is-open .kdp-cover-extra-inner {
+  padding: 14px 4px 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kdp-cover-extra {
+    transition: none;
+  }
+}
+
+/* AI-Generated Content choice container — bordered, full-width stacked rows
+   (Yes / No) with a divider, mirroring the native KDP choice group. */
+.kdp-choice-box {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  background: #ffffff;
+  border: 1px solid #d5d9d9;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.kdp-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  font-size: 15px;
+  color: var(--kdp-text);
+  cursor: pointer;
+}
+
+.kdp-choice-row:hover {
+  background: #f7fafa;
+}
+
+.kdp-choice-row input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: #2162a1;
+}
+
+.kdp-choice-divider {
+  height: 1px;
+  background: #d5d9d9;
+}
+
+/* Teal informational callout ("Your book cannot be downloaded.") — a large
+   full-content-column panel with a teal left accent. */
+.kdp-info-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 18px 0 0;
+  padding: 18px 20px;
+  background: #ecf8f8;
+  border: 1px solid #a7d9da;
+  border-left: 5px solid #007185;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #0f1111;
+}
+
+.kdp-info-box__icon {
+  flex: none;
+  font-size: 18px;
+  line-height: 1.2;
+  color: #007185;
+}
+
+.kdp-info-box__msg {
+  font-weight: 700;
+}
+
+/* Accessibility radio stack — roomier vertical rhythm for long labels. */
+.kdp-radio-stack--accessibility {
+  gap: 12px;
+}
+
+/* Content page vertical rhythm — same shell as Details, but the Content
+   controls need more breathing room between labelled controls and sections. */
+.kdp-app--content .kdp-field {
+  margin-bottom: 16px;
+}
+
+.kdp-app--content .kdp-gap {
+  height: 28px;
+}
+
 /* Messages (read-gate states) ----------------------------------------- */
 .kdp-msg {
   max-width: var(--kdp-page-max);
@@ -1392,6 +1741,195 @@ body {
   color: var(--kdp-muted);
 }
 
+/* Employee page skeleton (initial protected-load placeholder) ----------
+   Shared by Details, Content, and (future) Pricing. Geometry mirrors the
+   real employee page: 980px max-width canvas, 3 progress cards, and
+   5–6 white section bands using the same 139px + minmax(0,1fr) two-column
+   grid. Only background-position animates; no opacity pulse, no
+   dimension changes, no slide. prefers-reduced-motion disables the
+   animation. */
+.kdp-app--skeleton {
+  /* Same outer canvas as the real app shell so the skeleton sits in the
+     same horizontal position the real page will land in. */
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Shimmer band: the only animated element. */
+.kdp-skel-band {
+  display: inline-block;
+  vertical-align: middle;
+  background: #e3e3e3;
+  background-image: linear-gradient(
+    90deg,
+    #e3e3e3 25%,
+    #f1f1f1 50%,
+    #e3e3e3 75%
+  );
+  background-size: 200% 100%;
+  background-position: 0% 0%;
+  background-repeat: no-repeat;
+  border-radius: 3px;
+  animation: kdp-skel-shimmer 1.35s ease-in-out infinite;
+}
+
+.kdp-skel-band--text {
+  border-radius: 3px;
+}
+.kdp-skel-band--input {
+  border-radius: var(--kdp-radius-sm);
+}
+.kdp-skel-band--btn {
+  border-radius: var(--kdp-radius-sm);
+}
+.kdp-skel-band--dim {
+  /* Same color band — used only to suggest a shorter / fainter line
+     without changing the animation. */
+  background-image: linear-gradient(
+    90deg,
+    #e7e7e7 25%,
+    #f1f1f1 50%,
+    #e7e7e7 75%
+  );
+}
+
+@keyframes kdp-skel-shimmer {
+  0%   { background-position: 100% 0%; }
+  100% { background-position: -100% 0%; }
+}
+
+/* Book title placeholder. Aligned where .kdp-book-title sits. */
+.kdp-skel-title {
+  margin: 20px 26px 4px;
+  display: flex;
+}
+
+/* Progress row placeholder. Same 3-up grid + 12px gap as .kdp-progress. */
+.kdp-skel-progress {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  background: #e9e9e9;
+  margin: 16px 0 0;
+  padding: 0;
+}
+
+.kdp-skel-progress-item {
+  min-height: 76px;
+  padding: 16px 18px 14px;
+  background: #ffffff;
+  border: 1px solid #e3e6e6;
+  border-radius: var(--kdp-radius);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+}
+
+/* Section placeholder band stack. */
+.kdp-skel-sections {
+  display: block;
+}
+
+.kdp-skel-section {
+  display: grid;
+  grid-template-columns: 139px minmax(0, 1fr);
+  column-gap: 19px;
+  margin-top: 8px;
+  padding: 20px 26px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--kdp-section-divider);
+}
+
+.kdp-skel-section-label {
+  display: flex;
+  align-items: flex-start;
+}
+
+.kdp-skel-section-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Text-to-text rows sit close together (~7-8px). Control/input/button
+     rows opt in to a larger top margin (.kdp-skel-row--control) so the
+     visual rhythm matches the real page: text line -> ~7-8px -> text
+     line -> ~11-12px -> control -> ~8px -> second control. */
+  gap: 8px;
+}
+
+.kdp-skel-row {
+  display: block;
+}
+
+/* Optical top space before a control/input/button so the text-to-control
+   transition reads as ~11-12px instead of the 8px text-to-text gap. */
+.kdp-skel-row--control {
+  margin-top: 4px;
+}
+
+/* Choice (radio) row — small circle + line. */
+.kdp-skel-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.kdp-skel-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.kdp-skel-radio {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #e3e3e3;
+  background-image: linear-gradient(
+    90deg,
+    #e3e3e3 25%,
+    #f1f1f1 50%,
+    #e3e3e3 75%
+  );
+  background-size: 200% 100%;
+  background-position: 0% 0%;
+  background-repeat: no-repeat;
+  flex: none;
+  animation: kdp-skel-shimmer 1.35s ease-in-out infinite;
+}
+
+/* Mobile: collapse to single-column and drop the 139px label column so we
+   do not preserve the desktop two-column grid on narrow screens. */
+@media (max-width: 640px) {
+  .kdp-skel-progress {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .kdp-skel-section {
+    grid-template-columns: 1fr;
+    row-gap: 10px;
+    padding: 16px;
+    margin-top: 6px;
+  }
+  .kdp-skel-title {
+    margin: 16px 16px 2px;
+  }
+}
+
+@media (max-width: 760px) {
+  .kdp-skel-title {
+    margin: 16px 16px 2px;
+  }
+}
+
+/* Reduced motion: stop the shimmer, keep neutral placeholders so the page
+   geometry is still conveyed. */
+@media (prefers-reduced-motion: reduce) {
+  .kdp-skel-band,
+  .kdp-skel-radio {
+    animation: none;
+  }
+}
+
 /* Inline errors (KDP field error component) --------------------------- */
 .kdp-error-alert {
   display: flex;
@@ -1415,6 +1953,35 @@ body {
   flex: none;
   margin-top: 1px;
   color: var(--kdp-error);
+}
+
+/* Completion validation summary (top of page + below Save buttons) ----- */
+.kdp-validation-summary {
+  margin: 12px 26px 0;
+  padding: 12px 14px 14px 16px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--kdp-text);
+  background: #ffffff;
+  border-top: 2px solid var(--kdp-error);
+  border-right: 2px solid var(--kdp-error);
+  border-bottom: 2px solid var(--kdp-error);
+  border-left: 12px solid var(--kdp-error);
+  border-radius: var(--kdp-radius);
+}
+
+.kdp-validation-summary__title {
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+
+.kdp-validation-summary__list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.kdp-validation-summary__item {
+  margin: 2px 0;
 }
 
 /* Responsive ----------------------------------------------------------- */
@@ -1461,6 +2028,37 @@ body {
     width: 100%;
   }
 
+  /* Content bottom nav + "Next step" column fill the mobile column. */
+  .kdp-actions__primary {
+    width: 100%;
+  }
+
+  .kdp-actions__next {
+    width: 100%;
+    text-align: center;
+  }
+
+  .kdp-actions--nav {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .kdp-actions__group {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  /* Cover "Cover Creator" / upload content stacks on narrow screens. */
+  .kdp-cover-body,
+  .kdp-cover-extra-inner {
+    flex-direction: column;
+  }
+
+  .kdp-btn--cover {
+    align-self: flex-start;
+    margin-top: 14px;
+  }
+
   .kdp-cat-panes {
     grid-template-columns: 1fr;
     gap: 14px;
@@ -1484,6 +2082,21 @@ body {
   .kdp-section-label > span {
     font-size: 18px;
     line-height: 22px;
+  }
+
+  .kdp-book-title {
+    margin: 16px 16px 2px;
+    font-size: 18px;
+  }
+
+  /* ISBN + Publisher stack to a single column on narrow screens. */
+  .kdp-row--two {
+    flex-direction: column;
+  }
+
+  .kdp-row--two .kdp-field {
+    width: 100%;
+    min-width: 0;
   }
 
   .kdp-author-name-row {
@@ -1517,5 +2130,82 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .kdp-preorder-extra {
     transition: none;
+  }
+}
+
+/* Visually-hidden file inputs (opened via button click only). */
+.kdp-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.kdp-has-file {
+  display: inline-block;
+  margin-left: 10px;
+  color: #007600;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Reusable Saving... / Done! blocking overlay (Content; reused later for
+   Details/Pricing). The Done state holds ~650ms then clears (JS-controlled).
+   prefers-reduced-motion shortens the transition. */
+.kdp-save-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 17, 17, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+  padding: 16px;
+}
+
+.kdp-save-overlay__box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  min-width: 200px;
+  padding: 22px 28px;
+  background: #ffffff;
+  border: 1px solid #c9cccf;
+  border-radius: var(--kdp-radius);
+  box-shadow: 0 2px 10px rgba(15, 17, 17, 0.28);
+}
+
+.kdp-save-overlay__label {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--kdp-text);
+}
+
+.kdp-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #e7e9ec;
+  border-top-color: #007600;
+  border-radius: 50%;
+  animation: kdp-spin 0.7s linear infinite;
+}
+
+@keyframes kdp-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kdp-save-overlay {
+    transition: none;
+  }
+  .kdp-spinner {
+    animation-duration: 1.4s;
   }
 }

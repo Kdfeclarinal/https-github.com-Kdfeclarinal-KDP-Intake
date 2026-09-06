@@ -1,5 +1,6 @@
 import React from 'react';
 import { KDP_CATEGORIES, KDP_CATEGORY_LEAVES, KDP_CATEGORY_MAX, KDP_CATEGORY_ROOT } from './kdpCategories.js';
+import { KdpProgress, KdpCheckIcon } from '../progress/KdpProgress.jsx';
 
 // Employee Kindle eBook Details page.
 // Local-only form state. No backend save in this milestone.
@@ -14,6 +15,20 @@ const KEYWORD_COUNT = 7;
 const KEYWORD_MAX = 50;
 const MAX_CONTRIBUTORS = 9;
 const ROOT = KDP_CATEGORY_ROOT;
+
+// Protected save endpoint — same scoped opaque-token model as the load.
+// The raw access_token is read from the page URL at runtime; it is never
+// persisted, logged, or embedded in the bundle.
+const SAVE_ENDPOINT = 'https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/saveEmployeeStep';
+const REQUIRED_KEYS = ['book_title', 'primary_author', 'description', 'publishing_rights', 'categories'];
+// Client-side block text for the required keys (native KDP copy). Server remains authoritative.
+const REQUIRED_MSG = {
+  book_title: 'Enter a title.',
+  primary_author: 'Add the author\'s name.',
+  description: 'Enter a description of 4,000 characters or fewer.',
+  publishing_rights: 'Enter a selection for publishing rights.',
+  categories: 'Add a category for your book.',
+};
 
 // --- authoritative option lists (from live KDP audit) -------------------
 
@@ -120,22 +135,6 @@ function KdpInfoIcon(props) {
   );
 }
 
-function KdpCheckIcon(props) {
-  return Svg(props,
-    h('circle', { cx: 8, cy: 8, r: 8, fill: '#007600' }),
-    h('path', { d: 'M4.6 8.2l2.2 2.2 4.6-4.8', fill: 'none', stroke: '#fff', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
-  );
-}
-
-function KdpLockIcon(props) {
-  return Svg(props,
-    h('path', {
-      d: 'M4 7V5a4 4 0 018 0v2h1v7H3V7h1zm1.5 0h5V5a2.5 2.5 0 00-5 0v2z',
-      fill: '#565959',
-    })
-  );
-}
-
 function KdpCloseIcon(props) {
   return Svg(props,
     h('path', { d: 'M4 4l8 8M12 4l-8 8', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round' })
@@ -208,28 +207,222 @@ function KdpSearchIcon() {
   );
 }
 
-function initState(book) {
+// Native value <-> React value domain maps (the live page stores the full
+// lowercase language name and capitalized contributor labels).
+const NATIVE_LANG_BY_CODE = { en: 'english', es: 'spanish', fr: 'french', de: 'german', it: 'italian', pt: 'portuguese', ja: 'japanese' };
+const NATIVE_ROLE_BY_VALUE = {};
+CONTRIBUTOR_ROLES.forEach(function (r) { NATIVE_ROLE_BY_VALUE[r.value] = r.label; });
+
+function initState(book, saved) {
+  const s = saved && typeof saved === 'object' ? saved : {};
+  const sections = s.sections && typeof s.sections === 'object' ? s.sections : null;
+  // Hydrate from the native sections wrapper (state_json from the server).
+  const v = (key, pick) => {
+    const sec = sections && sections[key];
+    if (!sec) return undefined;
+    return pick ? pick(sec) : sec.value;
+  };
   const emptyKeywords = Array.from({ length: KEYWORD_COUNT }, () => '');
+  const savedKeywords = v('keywords', (sec) => sec.value.keywords) || [];
+  var authorName = [];
+  const pa = v('primary_author');
+  if (pa && typeof pa === 'object') {
+    const f = v('primary_author', (sec) => sec.fields) || {};
+    authorName = [f.author_first_name, f.author_last_name].filter(Boolean);
+    if (!authorName.length && pa.value) authorName = String(pa.value).trim().split(/\s+/);
+  } else if (typeof pa === 'string' && pa.trim()) {
+    authorName = pa.trim().split(/\s+/);
+  }
+  const langFull = v('language') || (book && (book.kdp_language || book.language)) || 'en';
+  const langCode = NATIVE_LANG_BY_CODE[langFull] ? langFull : (Object.keys(NATIVE_LANG_BY_CODE).find((c) => NATIVE_LANG_BY_CODE[c] === langFull) || langFull || 'en');
+  const contribs = v('contributors');
+  const rightsFull = v('publishing_rights') || '';
+  const rightsCode = rightsFull === 'copyright_owner' ? 'copyright' : (rightsFull === 'public_domain' ? 'public_domain' : '');
+  const age = v('age_grade_range', (sec) => sec.value) || {};
+  const catsValue = v('categories', (sec) => sec.value) || {};
+  // categories.json is a stringified array of { root, path, category, subcategories, placement, displayPath }.
+  let savedCats = [];
+  try {
+    const parsed = typeof catsValue.json === 'string' ? JSON.parse(catsValue.json) : (Array.isArray(catsValue.json) ? catsValue.json : []);
+    savedCats = (Array.isArray(parsed) ? parsed : []).map(function (e) {
+      const display = (e.displayPath || (e.root + (e.path && e.path.length ? ' › ' + e.path.join(' › ') : '') + (e.placement ? ' › ' + e.placement : ''))).replace(/ > /g, ' › ');
+      return { key: display.toLowerCase(), name: display };
+    });
+  } catch (e) { savedCats = []; }
+  const pre = v('preorder') || {};
   return {
-    language: (book && (book.kdp_language || book.language)) || 'en',
-    bookTitle: (book && book.book_title) || '',
-    subtitle: '',
+    language: langCode,
+    bookTitle: v('book_title') || (book && book.book_title) || '',
+    subtitle: v('subtitle') || '',
     seriesOpen: false,
     seriesName: '',
-    editionNumber: '',
-    primaryAuthor: { firstName: '', lastName: '' },
-    contributors: [{ role: 'author', firstName: '', lastName: '' }],
-    description: '',
-    publishingRights: '', // 'copyright' | 'public_domain'
-    adultOnly: '', // 'yes' | 'no'
-    readingAgeMin: '',
-    readingAgeMax: '',
-    marketplace: (book && book.primary_marketplace) || 'amazon.com',
-    categories: [], // up to KDP_CATEGORY_MAX; full taxonomy wired below
-    keywords: emptyKeywords,
-    publishOption: 'release_now', // 'release_now' | 'preorder'
-    preorderDate: '',
+    editionNumber: v('edition_number') || '',
+    primaryAuthor: {
+      firstName: authorName[0] || '',
+      lastName: authorName.slice(1).join(' ') || '',
+    },
+    contributors:
+      Array.isArray(contribs) && contribs.length
+        ? contribs.map(function (c) {
+            const roleCode = c && c.role ? (NATIVE_ROLE_BY_VALUE[c.role] ? c.role : (Object.keys(NATIVE_ROLE_BY_VALUE).find((v) => NATIVE_ROLE_BY_VALUE[v] === c.role) || c.role)) : 'author';
+            return {
+              role: roleCode,
+              firstName: (c && c.firstName) || '',
+              lastName: (c && c.lastName) || '',
+            };
+          })
+        : [{ role: 'author', firstName: '', lastName: '' }],
+    description: v('description', (sec) => sec.value.text) || '',
+    publishingRights: rightsCode,
+    adultOnly: v('adult_question') || '',
+    readingAgeMin: (age.reading_age_min != null && String(age.reading_age_min)) || '',
+    readingAgeMax: (age.reading_age_max != null && String(age.reading_age_max)) || '',
+    marketplace: v('primary_marketplace') || (book && book.primary_marketplace) || 'amazon.com',
+    categories: savedCats,
+    keywords: Array.from({ length: KEYWORD_COUNT }, function (_, i) { return savedKeywords[i] || ''; }),
+    publishOption: (pre.releaseMode) || 'release_now',
+    preorderDate: (pre.releaseDateGMT) || '',
   };
+}
+
+// --- save payload builders (native contract) --------------------------------
+// Emits the full state_json wrapper with keyed sections, plus extracted_fields
+// helpers. Field-level shapes match the authoritative live GHL details page.
+// Series is intentionally absent — it is UI-only and not part of the Details
+// save contract.
+
+function cleanOptional(v) {
+  return v === undefined || v === null ? '' : v;
+}
+
+function buildProgressState(activeStep) {
+  return {
+    activeStep: activeStep,
+    steps: {
+      details: { status: activeStep === 'details' ? 'in_progress' : 'complete', isUnlocked: true, isComplete: activeStep !== 'details' },
+      content: { status: activeStep === 'content' ? 'in_progress' : 'locked', isUnlocked: activeStep === 'content', isComplete: false },
+      pricing: { status: 'locked', isUnlocked: false, isComplete: false },
+    },
+  };
+}
+
+function buildCategoriesValue(cats) {
+  var entries = [];
+  if (Array.isArray(cats)) {
+    entries = cats.map(function (c) {
+      var parts = String(c && c.name || '').split(' › ').filter(Boolean);
+      if (!parts.length) return null;
+      var root = parts[0];
+      var placement = parts[parts.length - 1];
+      var path = parts.slice(1, -1);
+      var category = path.length ? path[0] : '';
+      var subcategories = path.length > 1 ? path.slice(1) : [];
+      return { root: root, path: path, category: category, subcategories: subcategories, placement: placement, displayPath: parts.join(' > ') };
+    }).filter(Boolean);
+  }
+  return {
+    selections: entries.map(function (e) { return { root: e.root, path: e.path.slice(), category: e.category, subcategories: e.subcategories.slice(), placement: e.placement, displayPath: e.displayPath }; }),
+    selectedCount: entries.length,
+    maxSelected: KDP_CATEGORY_MAX,
+    displayText: entries.map(function (e) { return e.displayPath; }).join('\n'),
+    json: entries.length ? JSON.stringify(entries.map(function (e) { return { root: e.root, path: e.path.slice(), category: e.category, subcategories: e.subcategories.slice(), placement: e.placement, displayPath: e.displayPath }; }), null, 2) : '[]',
+    lastSaved: entries.map(function (e) { return { root: e.root, path: e.path.slice(), category: e.category, subcategories: e.subcategories.slice(), placement: e.placement, displayPath: e.displayPath }; }),
+  };
+}
+
+function buildStateJson(s, saveType, activeStep, errs) {
+  var sections = {
+    language: { sectionKey: 'language', sectionLabel: 'Language', wrapperSelector: '#custom-code-LQpuP3XOMQ', storageStrategy: 'page_json', booksColumn: null, required: false, reviewable: true, value: NATIVE_LANG_BY_CODE[s.language] || 'english' },
+    book_title: { sectionKey: 'book_title', sectionLabel: 'Book Title', wrapperSelector: '#custom-code-Alppf8QDvH', storageStrategy: 'dedicated_column', booksColumn: 'book_title', required: true, reviewable: true, value: s.bookTitle },
+    subtitle: { sectionKey: 'subtitle', sectionLabel: 'Subtitle', wrapperSelector: '#custom-code-j4SrVFbPtR', storageStrategy: 'dedicated_column', booksColumn: 'subtitle', required: false, reviewable: true, value: s.subtitle },
+    edition_number: { sectionKey: 'edition_number', sectionLabel: 'Edition Number / Series Info', wrapperSelector: '#custom-code-lW9ss8QCsv', storageStrategy: 'page_json', booksColumn: null, required: false, reviewable: true, value: s.editionNumber },
+    primary_author: { sectionKey: 'primary_author', sectionLabel: 'Primary Author', wrapperSelector: '#custom-code-Ov8kPjV-mW', storageStrategy: 'dedicated_column', booksColumn: 'primary_author_name', required: true, reviewable: true, value: [s.primaryAuthor.firstName, s.primaryAuthor.lastName].filter(Boolean).join(' '), fields: { author_first_name: s.primaryAuthor.firstName, author_last_name: s.primaryAuthor.lastName } },
+    contributors: { sectionKey: 'contributors', sectionLabel: 'Contributors', wrapperSelector: '#custom-code-AHb2KdiWfO', storageStrategy: 'review_item', booksColumn: null, required: false, reviewable: true, value: s.contributors.map(function (c) { var roleLabel = NATIVE_ROLE_BY_VALUE[c.role] || 'Author'; return { role: roleLabel, firstName: c.firstName, lastName: c.lastName, fullName: [c.firstName, c.lastName].filter(Boolean).join(' ') }; }) },
+    description: { sectionKey: 'description', sectionLabel: 'Description', wrapperSelector: '#custom-code-zEDVDgQMTg', storageStrategy: 'review_item', booksColumn: null, required: true, reviewable: true, value: { html: s.description, text: s.description, source: '', sourceMode: false, characterCount: s.description.length, remainingCharacters: DESCRIPTION_MAX - s.description.length, maxCharacters: DESCRIPTION_MAX } },
+    publishing_rights: { sectionKey: 'publishing_rights', sectionLabel: 'Publishing Rights', wrapperSelector: '#custom-code-XpFnYPLsfO', storageStrategy: 'review_item', booksColumn: null, required: true, reviewable: true, value: s.publishingRights === 'public_domain' ? 'public_domain' : 'copyright_owner', label: s.publishingRights === 'public_domain' ? 'This is a public domain work. What is a public domain work?' : 'I own the copyright and I hold the necessary publishing rights. What are publishing rights?' },
+    adult_question: { sectionKey: 'adult_question', sectionLabel: 'Adult Content Question', wrapperSelector: '#custom-code-zPDxMwyMCS', storageStrategy: 'review_item', booksColumn: null, required: false, reviewable: true, value: s.adultOnly || 'no', label: s.adultOnly === 'yes' ? 'Yes' : 'No' },
+    age_grade_range: { sectionKey: 'age_grade_range', sectionLabel: 'Age and Grade Range', wrapperSelector: '#custom-code-20X4apRnbR', storageStrategy: 'review_item', booksColumn: null, required: false, reviewable: true, value: { reading_age_min: s.readingAgeMin || '', reading_age_max: s.readingAgeMax || '' }, fields: { reading_age_min: s.readingAgeMin || '', reading_age_max: s.readingAgeMax || '' } },
+    primary_marketplace: { sectionKey: 'primary_marketplace', sectionLabel: 'Primary Marketplace', wrapperSelector: '#custom-code-TduJNHpI04', storageStrategy: 'dedicated_column', booksColumn: 'primary_marketplace', required: false, reviewable: true, value: s.marketplace },
+    categories: { sectionKey: 'categories', sectionLabel: 'Categories', wrapperSelector: '#custom-code-Fju8Br12Wa', storageStrategy: 'review_item', booksColumn: null, required: true, reviewable: true, value: buildCategoriesValue(s.categories) },
+    keywords: { sectionKey: 'keywords', sectionLabel: 'Keywords', wrapperSelector: '#custom-code-W8ztlhlKkr', storageStrategy: 'review_item', booksColumn: null, required: false, reviewable: true, value: { keywords: s.keywords.map(function (k) { return String(k).slice(0, KEYWORD_MAX); }), filledCount: s.keywords.filter(function (k) { return String(k).trim() !== ''; }).length, maxKeywords: KEYWORD_COUNT, maxCharactersPerKeyword: KEYWORD_MAX } },
+    preorder: { sectionKey: 'preorder', sectionLabel: 'Pre-Order', wrapperSelector: '#custom-code-sDZTg6xzEk', storageStrategy: 'review_item', booksColumn: null, required: false, reviewable: true, value: { releaseMode: s.publishOption, preorderEnabled: s.publishOption === 'preorder', releaseDateGMT: s.preorderDate || null, isValid: true, validationMessage: '' } },
+  };
+  return {
+    page: 'details',
+    stepName: 'details',
+    stepLabel: 'Kindle eBook Details',
+    saveType: saveType,
+    savedAt: new Date().toISOString(),
+    sections: sections,
+    extractedFields: { book_title: s.bookTitle, subtitle: s.subtitle || null, primary_author_name: [s.primaryAuthor.firstName, s.primaryAuthor.lastName].filter(Boolean).join(' ') || null, primary_marketplace: s.marketplace },
+    progressState: buildProgressState(activeStep),
+    validationRequiredKeys: REQUIRED_KEYS,
+    validationErrors: errs || {},
+  };
+}
+
+// extracted_fields carries the handful of top-level values the backend reads
+// straight off the book record. Exact keys per the native contract.
+function buildExtractedFields(s) {
+  return {
+    book_title: s.bookTitle,
+    subtitle: s.subtitle || null,
+    primary_author_name: [s.primaryAuthor.firstName, s.primaryAuthor.lastName].filter(Boolean).join(' ') || null,
+    primary_marketplace: s.marketplace,
+  };
+}
+
+// Required-key check for a COMPLETE submission only. Returns { key: message }.
+function requiredErrors(s) {
+  const errs = {};
+  if (!String(cleanOptional(s.bookTitle)).trim()) errs.book_title = REQUIRED_MSG.book_title;
+  if (!String(cleanOptional(s.primaryAuthor.firstName)).trim() && !String(cleanOptional(s.primaryAuthor.lastName)).trim())
+    errs.primary_author = REQUIRED_MSG.primary_author;
+  if (!String(cleanOptional(s.description)).trim()) errs.description = REQUIRED_MSG.description;
+  if (!s.publishingRights) errs.publishing_rights = REQUIRED_MSG.publishing_rights;
+  if (!s.categories || s.categories.length === 0) errs.categories = REQUIRED_MSG.categories;
+  return errs;
+}
+
+// Map a server-returned progress_state onto the 3-tile display. The server
+// shape is not invented here — both the native {activeStep, steps:{...}} form
+// and the legacy flat {details:'complete',...} form are honored; anything else
+// falls back to the safe default (Details in progress, Content + Pricing locked).
+function progressFromServer(ps) {
+  const out = {
+    details: { status: 'in_progress', active: true },
+    content: { status: 'locked', active: false },
+    pricing: { status: 'locked', active: false },
+  };
+  if (!ps || typeof ps !== 'object') return out;
+  const steps = ps.steps && typeof ps.steps === 'object' ? ps.steps : null;
+  const raw = {};
+  ['details', 'content', 'pricing'].forEach(function (k) {
+    const v = steps ? steps[k] : ps[k];
+    if (typeof v === 'string') raw[k] = v;
+    else if (v && typeof v === 'object') raw[k] = v.status || v.state || (v.complete ? 'complete' : null);
+  });
+  const activeStep = ps.activeStep || ps.current_step || null;
+  ['details', 'content', 'pricing'].forEach(function (k) {
+    const status =
+      raw[k] ||
+      (k === activeStep
+        ? 'in_progress'
+        : k === 'details'
+          ? 'in_progress'
+          : 'locked');
+    out[k] = { status: status, active: k === activeStep || status === 'in_progress' };
+  });
+  return out;
+}
+
+// Build a safe, user-presentable error message from a save response. Never
+// echo back request bodies or token values.
+function safeSaveError(data, status) {
+  if (data && typeof data.error === 'string' && data.error) return data.error;
+  if (data && typeof data.message === 'string' && data.message) return data.message;
+  if (status) return 'The save could not be completed (HTTP ' + status + '). No changes were saved.';
+  return 'The save could not be completed. No changes were saved.';
 }
 
 // --- small presentational helpers ---------------------------------------
@@ -323,32 +516,45 @@ function KdpErrorAlert({ children }) {
   );
 }
 
-// --- 3-step progress header (KDP-style tiles) ----------------------------
+// --- completion validation summary ------------------------------------
+// Native copy: "Please fix the highlighted error(s) to continue." plus the
+// applicable required-field messages. Rendered both above the progress tiles
+// and below the Save buttons when a COMPLETE save is blocked client-side.
 
-function KdpProgress() {
-  const steps = [
-    { title: 'Kindle eBook Details', status: 'In Progress...', active: true },
-    { title: 'Kindle eBook Content', status: 'Not Started...', active: false },
-    { title: 'Kindle eBook Pricing', status: 'Not Started...', active: false },
-  ];
+// Ordered list of the required-field messages currently failing (native order).
+function validationMessages(errs) {
+  const out = [];
+  REQUIRED_KEYS.forEach(function (k) {
+    if (errs[k]) out.push(errs[k]);
+  });
+  return out;
+}
+
+function ValidationSummary({ errs }) {
+  const items = validationMessages(errs);
+  if (items.length === 0) return null;
   return h(
     'div',
-    { className: 'kdp-progress' },
-    steps.map((s) =>
-      h(
-        'div',
-        { key: s.title, className: 'kdp-progress-item' + (s.active ? ' is-active' : '') },
-        h('div', { className: 'kdp-progress-title' }, s.title),
-        h(
-          'div',
-          { className: 'kdp-progress-status' },
-          s.active ? KdpCheckIcon() : KdpLockIcon(),
-          h('span', null, s.status)
-        )
-      )
+    { className: 'kdp-validation-summary', role: 'alert' },
+    h('p', { className: 'kdp-validation-summary__title' }, 'Please fix the highlighted error(s) to continue.'),
+    h(
+      'ul',
+      { className: 'kdp-validation-summary__list' },
+      items.map(function (m) {
+        return h('li', { className: 'kdp-validation-summary__item', key: m }, m);
+      })
     )
   );
 }
+
+// --- 3-step progress header (KDP-style tiles) ----------------------------
+//
+// KdpProgress is shared between DetailsPage and ContentPage (see
+// src/progress/KdpProgress.jsx). When `currentStep` is provided,
+// the visual "is-active" underline is determined by currentStep
+// (unlocked-only) instead of the server's progress[key].active
+// flag. The Complete / In Progress / Not Started text is still
+// derived from the server's progress[key].status.
 
 // --- Series modal (local multi-step flow; no external API; no save) ------
 
@@ -886,6 +1092,16 @@ function KdpDescriptionEditor({ value, onChange, maxLength }) {
   const [source, setSource] = React.useState(false);
   const surfaceRef = React.useRef(null);
 
+  // Hydrate the uncontrolled contentEditable from the persisted value. No-op
+  // while typing: onInput already pushes the same text up, so DOM == value.
+  React.useEffect(() => {
+    const el = surfaceRef.current;
+    if (!el || el.isContentEditable !== true) return;
+    const current = el.textContent || '';
+    if (current !== (value || '')) el.textContent = value || '';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, source]);
+
   const exec = (cmd, arg) => {
     const el = surfaceRef.current;
     if (!el) return;
@@ -950,13 +1166,34 @@ function KdpDescriptionEditor({ value, onChange, maxLength }) {
 
 // --- main component ------------------------------------------------------
 
-export function DetailsPage({ book, stepName }) {
-  const [state, setState] = React.useState(() => initState(book));
+export function DetailsPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate }) {
+  const [state, setState] = React.useState(() => initState(book, savedState));
   const [categoryAttempted, setCategoryAttempted] = React.useState(false);
   const [chooserOpen, setChooserOpen] = React.useState(false);
   const [seriesModalOpen, setSeriesModalOpen] = React.useState(false);
   const [seriesError, setSeriesError] = React.useState(false);
   const [titleTouched, setTitleTouched] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const savingRef = React.useRef(false); // synchronous in-flight guard (double-click safe)
+  // Reusable Saving… / Done! overlay. The Done state holds ~650ms
+  // (300ms under prefers-reduced-motion) then clears. Driven
+  // only by real server responses.
+  const [overlay, setOverlay] = React.useState(null); // { phase: 'saving' | 'done', label, done }
+  const runSaveOverlay = (label) => {
+    setOverlay({ phase: 'saving', label, done: false });
+  };
+  const showDone = (label) => {
+    setOverlay({ phase: 'done', label, done: true });
+    const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const hold = reduce ? 300 : 650;
+    window.setTimeout(() => setOverlay((cur) => (cur && cur.done ? null : cur)), hold);
+  };
+  const clearOverlay = () => setOverlay(null);
+  const [feedback, setFeedback] = React.useState(null); // { kind: 'error'|'ok', msg }
+  const [validationErrors, setValidationErrors] = React.useState({});
+  const [serverProgress, setServerProgress] = React.useState(
+    initialProgress ? progressFromServer(initialProgress) : null
+  );
 
   const setField = (key, value) =>
     setState((s) => Object.assign({}, s, { [key]: value }));
@@ -995,6 +1232,109 @@ export function DetailsPage({ book, stepName }) {
       return Object.assign({}, s, { keywords: next });
     });
 
+  // --- Save handlers (one request at a time; no write on load) ----------
+  const doSave = (saveType, nextStepName, activeStep) => {
+    if (savingRef.current) return; // request protection: one click = one request
+    if (!bookId || !accessToken) {
+      setFeedback({ kind: 'error', msg: 'Missing book or access context. Reopen this page from your bookshelf link.' });
+      return;
+    }
+    const errs = saveType === 'complete' ? requiredErrors(state) : {};
+    if (saveType === 'complete' && Object.keys(errs).length > 0) {
+      setValidationErrors(errs); // block completion; Content stays locked
+      setFeedback(null); // top + bottom ValidationSummary render from validationErrors
+      return;
+    }
+    setValidationErrors({});
+    setFeedback(null);
+    savingRef.current = true;
+    setSaving(true);
+    runSaveOverlay('Saving…');
+    var progressState = buildProgressState(activeStep);
+    var stateJson = buildStateJson(state, saveType, activeStep, errs);
+    fetch(SAVE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        book_id: bookId,
+        access_token: accessToken, // runtime URL value only; never persisted/logged
+        step_name: 'details',
+        next_step_name: nextStepName,
+        save_type: saveType,
+        state_json: stateJson,
+        extracted_fields: buildExtractedFields(state),
+        validation_required_keys: REQUIRED_KEYS,
+        validation_errors: errs,
+        progress_state: progressState,
+        source: 'ghl_kdp_details_page',
+      }),
+    })
+      .then((res) => res.json().catch(() => null).then((data) => ({ ok: res.ok, status: res.status, data })))
+      .then(({ ok, status, data }) => {
+        // Defer the success/clear transition one tick so the Saving
+        // overlay is guaranteed to paint at least one frame, even
+        // when the response is instantaneous. Without this defer
+        // React 18 batches the saving -> done state update and the
+        // saving phase is never visible to the user (or the test).
+        window.setTimeout(() => {
+          if (ok === true && data && data.ok === true) {
+            if (data.progress_state) setServerProgress(progressFromServer(data.progress_state));
+            if (saveType === 'complete') {
+              // Authoritative gate: only navigate to Content when
+              // the server itself confirms details is complete and
+              // content is unlocked. Otherwise stay on Details and
+              // surface the existing feedback.
+              const ps = data.progress_state;
+              const detailsComplete = !!(ps && ps.steps && ps.steps.details && ps.steps.details.isComplete === true);
+              const contentUnlocked = !!(ps && ps.steps && ps.steps.content && ps.steps.content.isUnlocked === true);
+              if (detailsComplete && contentUnlocked && typeof onNavigate === 'function') {
+                showDone('Done!');
+                // Show Done! then navigate. The showDone timer
+                // already clears the overlay; the navigate fires
+                // after the hold so the user sees the success
+                // state before the page change.
+                const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+                const hold = reduce ? 300 : 650;
+                window.setTimeout(() => {
+                  if (typeof onNavigate === 'function') onNavigate(nextStepName);
+                }, hold);
+              } else {
+                // Server returned ok but did not authorize the
+                // move. Fall back to the safe "details complete"
+                // message, no Done overlay, no navigation.
+                setFeedback({ kind: 'ok', msg: 'Details are complete. Content is unlocked.' });
+                clearOverlay();
+              }
+            } else {
+              // Draft: success overlay, no navigation.
+              showDone('Done!');
+              setFeedback({
+                kind: 'ok',
+                msg:
+                  'Draft saved.' +
+                  (data.data_valid === false ? ' The form is not complete yet.' : ''),
+              });
+            }
+          } else {
+            setFeedback({ kind: 'error', msg: safeSaveError(data, status) });
+            clearOverlay();
+          }
+        }, 50);
+      })
+      .catch(() => { setFeedback({ kind: 'error', msg: 'Could not reach the server. No changes were saved.' }); clearOverlay(); })
+      .finally(() => {
+        savingRef.current = false;
+        setSaving(false);
+      });
+  };
+
+  const handleDraft = () => doSave('draft', null, 'details');
+  const handleContinue = () => doSave('complete', 'content', 'content');
+
+  const fieldErr = (key) => validationErrors[key] || null;
+  // No server progress yet → safe default (Details in progress, rest not started).
+  const displayProgress = serverProgress || progressFromServer(null);
+
   const descLen = (state.description || '').length;
   const descRemaining = DESCRIPTION_MAX - descLen;
 
@@ -1022,7 +1362,7 @@ export function DetailsPage({ book, stepName }) {
   // --- Book Title + Subtitle ---
   const titleSection = h(
     Section,
-    { label: 'Book Title', error: titleError },
+    { label: 'Book Title', error: titleError || fieldErr('book_title') },
     h(Help, null, 'Enter your title as it appears on the book cover. If you add a subtitle, a colon will be inserted between the title and subtitle. Before continuing, check your spelling since this field cannot be updated after publication. ', KdpLink({ link: LINKS.bookTitle }), '.'),
     Label({ htmlFor: 'kdp-title', children: 'Book Title' }),
     h(TextField, {
@@ -1105,7 +1445,7 @@ export function DetailsPage({ book, stepName }) {
   // --- Primary Author ---
   const authorSection = h(
     Section,
-    { label: 'Author' },
+    { label: 'Author', error: fieldErr('primary_author') },
     h(Help, null, 'Enter the primary author or contributor for this book. See ', KdpLink({ link: LINKS.author }), '.'),
     Label({ htmlFor: 'kdp-author-first', children: 'Primary Author or Contributor' }),
     h(
@@ -1188,7 +1528,7 @@ export function DetailsPage({ book, stepName }) {
   // --- Description (KDP-like editor shell) ---
   const descriptionSection = h(
     Section,
-    { label: 'Description' },
+    { label: 'Description', error: fieldErr('description') },
     h(Help, null, 'Summarize your book. This will be your product description on Amazon, so customers can learn more about your book. ', KdpLink({ link: LINKS.formatDescription }), '.'),
     h(KdpDescriptionEditor, {
       value: state.description,
@@ -1200,7 +1540,7 @@ export function DetailsPage({ book, stepName }) {
   // --- Publishing Rights ---
   const rightsSection = h(
     Section,
-    { label: 'Publishing Rights' },
+    { label: 'Publishing Rights', error: fieldErr('publishing_rights') },
     h(
       'div',
       { className: 'kdp-radio-stack' },
@@ -1244,6 +1584,7 @@ export function DetailsPage({ book, stepName }) {
         h('input', {
           type: 'radio',
           name: 'adultOnly',
+          value: 'yes',
           checked: state.adultOnly === 'yes',
           onChange: () => setField('adultOnly', 'yes'),
         }),
@@ -1255,6 +1596,7 @@ export function DetailsPage({ book, stepName }) {
         h('input', {
           type: 'radio',
           name: 'adultOnly',
+          value: 'no',
           checked: state.adultOnly === 'no',
           onChange: () => setField('adultOnly', 'no'),
         }),
@@ -1323,7 +1665,7 @@ export function DetailsPage({ book, stepName }) {
 
   const categoriesSection = h(
     Section,
-    { label: 'Categories' },
+    { label: 'Categories', error: fieldErr('categories') },
     h(Help, null, 'Choose up to three categories that describe your book. Note: You must select your primary marketplace and audience first. ', KdpLink({ link: LINKS.categories }), '.'),
     h(
       'div',
@@ -1489,26 +1831,64 @@ export function DetailsPage({ book, stepName }) {
     { className: 'kdp-actions' },
     h(
       'button',
-      { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: true, title: 'Saving will be enabled in the next milestone.' },
-      'Save as Draft'
+      {
+        type: 'button',
+        className: 'kdp-btn kdp-btn--secondary',
+        onClick: handleDraft,
+        disabled: saving,
+        title: saving ? 'Saving…' : 'Save the current details without completing them.',
+      },
+      saving ? 'Saving…' : 'Save as Draft'
     ),
     h(
-      'button',
-      { type: 'button', className: 'kdp-btn kdp-btn--primary kdp-btn--continue', disabled: true, title: 'Saving will be enabled in the next milestone.' },
-      'Save and Continue'
+      'div',
+      { className: 'kdp-actions__primary' },
+      h(
+        'button',
+        {
+          type: 'button',
+          className: 'kdp-btn kdp-btn--primary kdp-btn--continue',
+          onClick: handleContinue,
+          disabled: saving,
+          title: saving ? 'Saving…' : 'Validate and complete the Details step.',
+        },
+        saving ? 'Saving…' : 'Save and Continue'
+      ),
+      h('div', { className: 'kdp-actions__next' }, 'Next step: Content')
     )
   );
 
-  const devNote = h(
-    'p',
-    { className: 'kdp-note kdp-note--dev' },
-    'Saving will be enabled in the next milestone.'
-  );
+  const feedbackNote = feedback
+    ? h(
+        'p',
+        { className: 'kdp-note' + (feedback.kind === 'error' ? ' kdp-note--error' : ' kdp-note--ok') },
+        feedback.msg
+      )
+    : null;
+
+  const overlayEl = overlay
+    ? h(
+        'div',
+        { className: 'kdp-save-overlay', role: 'status', 'aria-live': 'polite' },
+        h(
+          'div',
+          { className: 'kdp-save-overlay__box' },
+          overlay.phase === 'saving'
+            ? h('div', { className: 'kdp-spinner', 'aria-hidden': 'true' })
+            : h(KdpCheckIcon, { size: 28 }),
+          h('p', { className: 'kdp-save-overlay__label' }, overlay.phase === 'saving' ? (overlay.label || 'Saving…') : 'Done!')
+        )
+      )
+    : null;
+
+  const bookTitle = book && book.book_title ? book.book_title : '';
 
   return h(
     'div',
     { className: 'kdp-app' },
-    KdpProgress(),
+    bookTitle ? h('h1', { className: 'kdp-book-title' }, bookTitle) : null,
+    ValidationSummary({ errs: validationErrors }),
+    KdpProgress({ progress: displayProgress, onNavigate, currentStep: 'details' }),
     h('form', { className: 'kdp-form', onSubmit: (e) => e.preventDefault() },
       languageSection,
       titleSection,
@@ -1524,8 +1904,10 @@ export function DetailsPage({ book, stepName }) {
       keywordsSection,
       preorderSection,
       actions,
-      devNote
+      ValidationSummary({ errs: validationErrors }),
+      feedbackNote
     ),
-    seriesModalOpen ? h(SeriesModal, { onClose: () => setSeriesModalOpen(false) }) : null
+    seriesModalOpen ? h(SeriesModal, { onClose: () => setSeriesModalOpen(false) }) : null,
+    overlayEl
   );
 }

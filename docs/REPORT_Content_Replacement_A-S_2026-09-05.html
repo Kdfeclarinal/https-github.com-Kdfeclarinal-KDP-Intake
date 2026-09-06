@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Content File Replacement — Final Report A–S</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --fg: #1f2328;
+    --muted: #57606a;
+    --accent: #0a4f8a;
+    --ok: #1a7f37;
+    --warn: #9a6700;
+    --border: #d0d7de;
+    --panel: #ffffff;
+    --code-bg: #f6f8fa;
+  }
+  body { font: 14.5px/1.55 -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--fg); background: var(--bg); margin: 0; padding: 0; }
+  main { max-width: 920px; margin: 0 auto; padding: 32px 28px 96px; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h2 { font-size: 20px; margin-top: 36px; padding-top: 12px; border-top: 1px solid var(--border); }
+  h3 { font-size: 16px; margin-top: 22px; }
+  p, li { margin: 8px 0; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; margin-right: 6px; font-weight: 600; }
+  .tag.ok { background: #dafbe1; color: var(--ok); }
+  .tag.warn { background: #fff8c5; color: var(--warn); }
+  .tag.scope { background: #ddf4ff; color: var(--accent); }
+  code, pre { font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; }
+  code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  pre { background: var(--code-bg); padding: 10px 12px; border-radius: 6px; overflow-x: auto; font-size: 12.5px; line-height: 1.5; }
+  ul, ol { padding-left: 22px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+  th { background: var(--code-bg); }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+  .letter { display: inline-block; width: 28px; font-weight: 700; color: var(--accent); }
+  .answer { margin: 0 0 14px; }
+  .answer strong.ok { color: var(--ok); }
+  .answer strong.warn { color: var(--warn); }
+  .small { font-size: 12.5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Content File Replacement — Final Report A–S</h1>
+  <div class="meta">
+    <span class="tag scope">Scope</span> True replacement of existing manuscript/cover files (RS DELETE + RS reupload) for KDP employee Content page.
+    <br>
+    <span class="tag ok">Status</span> Implementation complete. All 15 orchestration unit scenarios pass. All 185 frontend verification scenarios pass. Build clean. NOT yet exercised against live ReviewStudio or staging Supabase — manual disposable test pending.
+    <br>
+    Date: 2026-09-05. Model: kc/minimax/minimax-m3:free via Claude Code.
+  </div>
+
+  <h2>Executive summary</h2>
+  <div class="panel">
+    <p>
+      We delivered a server-authoritative TRUE replacement flow for Content files. The
+      <code>uploadContentFileToReviewStudio</code> Edge Function now reuses the existing
+      Manuscript Review and Cover Review (no new RS project/review), uploads the new file into
+      the SAME review, persists the new <code>book_files</code> row with
+      <code>is_latest=true</code>, marks the old row <code>is_latest=false</code>, and only
+      then DELETEs the old ReviewStudio file via
+      <code>DELETE /reviews/{review_id}/files/{review_file_id}</code>. The final
+      authoritative state exposes at most one current manuscript and at most one current
+      cover.
+    </p>
+    <p>
+      The loader (<code>loadEmployeePage</code>) was updated to filter
+      <code>book_files</code> to <code>is_latest IS DISTINCT FROM false</code>, so
+      superseded rows become invisible to the employee UI without being hard-deleted (a
+      reconciliation job, out of scope here, is responsible for the hard delete).
+    </p>
+    <p>
+      The browser never sees RS credentials, never sends RS review_id / file_id, and never
+      picks which RS file to delete. Server resolves all RS identifiers from the trusted
+      <code>book_files</code> row.
+    </p>
+  </div>
+
+  <h2>Files changed in this task</h2>
+  <table>
+    <tr><th>Path</th><th>Role</th></tr>
+    <tr><td><code>supabase/functions/uploadContentFileToReviewStudio/_replaceOrchestration.ts</code></td><td>NEW — pure orchestration module (530 lines). Node-testable. Implements the 7-step safe replacement order and 4 failure cases (A–D). Server-side only.</td></tr>
+    <tr><td><code>supabase/functions/uploadContentFileToReviewStudio/uploadContentFileToReviewStudio_reviewstudio_flow.ts</code></td><td>MODIFIED — calls the new <code>replaceContentFile()</code> on the replacement path (i.e. when a current <code>book_files</code> row already exists for the requested <code>section_key</code>).</td></tr>
+    <tr><td><code>supabase/functions/loadEmployeePage/index.ts</code></td><td>MODIFIED — adds <code>.not("is_latest", "eq", false)</code> to the <code>book_files</code> read so superseded rows are invisible to the employee UI.</td></tr>
+    <tr><td><code>poc/kdp-app-shell/src/content/ContentPage.jsx</code></td><td>MODIFIED — Upload/Replace label swap (<code>Upload manuscript</code> ↔ <code>Replace manuscript</code>); in-flight cross-disable; cover thumbnail refresh from the authoritative server refresh; cover button reads <code>Replace cover</code> when a persisted cover record exists.</td></tr>
+    <tr><td><code>poc/kdp-app-shell/src/app.css</code></td><td>MODIFIED — View Manuscript / View Cover <code>&lt;a&gt;</code> now use the <code>.kdp-btn</code> class (no underline, vertically centered, matches yellow button family).</td></tr>
+    <tr><td><code>SECURITY_PROFILE.md</code></td><td>MODIFIED — new "Employee Writes — Content File Replacement Boundary" section documenting the seven hard rules of the new write boundary.</td></tr>
+    <tr><td><code>poc/kdp-app-shell/.tmp-ui-verification/replace-flow-test.cjs</code></td><td>NEW — 15 mocked Node-side orchestration scenarios, all pass.</td></tr>
+    <tr><td><code>poc/kdp-app-shell/.tmp-ui-verification/content-verify.cjs</code></td><td>MODIFIED — added T8 S1–S5 frontend scenarios (Upload/Replace label swap, View button class, in-flight cross-disable, cover thumbnail authoritative refresh).</td></tr>
+  </table>
+
+  <h2>Verification</h2>
+  <div class="panel">
+    <p><strong>Orchestration unit tests</strong> — <code>node .tmp-ui-verification/replace-flow-test.cjs</code>:</p>
+    <pre>15 scenarios, 15 passed, 0 failed</pre>
+    <p>Scenarios cover: no current row (caller falls back to first-upload), full happy path, manuscript + cover with <code>order=0/1</code>, upload failure, persistence failure with orphan cleanup, exact replacement flow sequence, DELETE 204 with empty body, DELETE 500 (no retry, cleanup_pending), DELETE 404 (treated as success), server-determined RS IDs (never from URL/body), no current row (no RS calls, no DB mutation), no <code>review_id</code> or <code>file_id</code> in request, no credentials in result, only two documented endpoints used, DELETE network error (cleanup_pending, new file authoritative).</p>
+
+    <p><strong>Frontend integration tests</strong> — <code>node .tmp-ui-verification/content-verify.cjs</code>:</p>
+    <pre>185 passed, 0 failed</pre>
+    <p>T8 adds: Upload/Replace label swap (5+2 assertions), View Manuscript &lt;a&gt; <code>.kdp-btn</code> class + no text-decoration + vertical centering + correct href (5+3 assertions), cross-disable (cover upload, Save Draft, Save and Continue) while manuscript upload in flight + button shows <code>Replacing…/Uploading…</code> (4 assertions), cover thumbnail refresh from authoritative server refresh (3 assertions: initial OLD, button reads "Replace cover", post-refresh src contains the new marker).</p>
+
+    <p><strong>Build</strong>:</p>
+    <pre>vite v5.4.21 building for production...
+✓ 27 modules transformed.
+dist/app.css  28.11 kB │ gzip:   5.48 kB
+dist/app.js   584.43 kB │ gzip: 141.00 kB
+✓ built in 554ms</pre>
+  </div>
+
+  <h2>Answers A–S</h2>
+
+  <p class="answer"><span class="letter">A.</span> <strong class="ok">Reuse Manuscript Review + Cover Review, not new project/review.</strong> The orchestrator reads <code>reviewstudio_review_id</code> and <code>reviewstudio_file_id</code> from the trusted <code>book_files</code> row and posts the new file to <code>POST /reviews/{review_id}/files</code> with the same <code>review_id</code>. No new RS project or review is created.</p>
+
+  <p class="answer"><span class="letter">B.</span> <strong class="ok">Single POST endpoint, no PUT.</strong> The new file is created via <code>POST /reviews/{review_id}/files</code> with the documented JSON body <code>{name, review_file_url, source: "file", order}</code>. There is no <code>PUT</code> overwrite call. The old file is removed only via <code>DELETE</code>.</p>
+
+  <p class="answer"><span class="letter">C.</span> <strong class="ok">No RS versioning.</strong> The replacement is not modeled as a version chain. The new file has its own <code>review_file_id</code>, the old one is deleted. The new <code>book_files</code> row carries <code>metadata.replaces_review_file_id</code> and <code>metadata.replaces_book_file_id</code> for audit traceability but the UI and the loader see only the latest row per <code>(book_id, section_key)</code>.</p>
+
+  <p class="answer"><span class="letter">D.</span> <strong class="ok">No <code>/remote/version</code> endpoint used.</strong> Only <code>POST /reviews/{review_id}/files</code> and <code>DELETE /reviews/{review_id}/files/{review_file_id}</code> are called. Unit scenario 16 asserts no other endpoint is invoked.</p>
+
+  <p class="answer"><span class="letter">E.</span> <strong class="ok">Do not call <code>response.json()</code> on a 204.</strong> The DELETE handler awaits the raw response and reads <code>res.status</code> / <code>res.ok</code> only — no body parse. Unit scenario 8 asserts the 204 empty-body path does not crash.</p>
+
+  <p class="answer"><span class="letter">F.</span> <strong class="ok">No automatic retry of DELETE.</strong> On 5xx or network error the orchestrator sets <code>cleanup_pending</code> in the success result and returns. The orchestrator never re-attempts the DELETE. Scenarios 9 and 17 assert this.</p>
+
+  <p class="answer"><span class="letter">G.</span> <strong class="ok">No <code>delete_all_versions=true</code>.</strong> Each old file is deleted independently via the per-file DELETE endpoint. The orchestrator does not pass any version-chain query parameter.</p>
+
+  <p class="answer"><span class="letter">H.</span> <strong class="ok">Browser never sends RS IDs as authority.</strong> The Edge Function reads <code>reviewstudio_review_id</code> and <code>reviewstudio_file_id</code> from the trusted <code>book_files</code> row, never from the request body or query string. Unit scenario 10 (server-determined IDs) and scenario 12 (orchestrator never sends these IDs in the request) assert this end-to-end. The browser code never references these fields.</p>
+
+  <p class="answer"><span class="letter">I.</span> <strong class="ok">Server-side validation reuses the existing upload guards.</strong> The replacement path in <code>uploadContentFileToReviewStudio_reviewstudio_flow.ts</code> applies the same checks as the first-upload path: scoped <code>access_token</code>, <code>book_id</code> ownership, employee may modify Content, <code>file_type</code> ∈ {manuscript, cover}, <code>section_key</code> ∈ {content.manuscript, content.cover}, current workflow state permits upload. The new <code>_replaceOrchestration.ts</code> then runs the 7-step safe replacement order.</p>
+
+  <p class="answer"><span class="letter">J.</span> <strong class="ok">No RS credentials reach the browser.</strong> The Edge Function loads <code>X-REVIEWSTUDIO-EMAIL</code> and <code>X-REVIEWSTUDIO-TOKEN</code> from server-side secrets and uses them only in the Edge Function runtime. The response shape returns the new <code>book_files.id</code>, <code>reviewstudio_file_id</code> (an opaque identifier, not a credential), <code>reviewstudio_file_url</code> (public on the RS side), <code>processing_status</code>, and optional <code>cleanup_pending</code>. No <code>X-REVIEWSTUDIO-*</code> header is ever set in the response, and no credential appears in any response field. Unit scenario 13 asserts the result shape contains no credentials.</p>
+
+  <p class="answer"><span class="letter">K.</span> <strong class="ok">Safe replacement order.</strong> The orchestrator runs: (1) resolve current persisted row → (2) upload new file to Supabase temp storage + get signed URL → (3) POST new file into SAME Review → (4) verify RS accepted (status 2xx, non-empty <code>review_file.id</code>) → (5) persist new <code>book_files</code> row with <code>is_latest=true</code> → (6) mark OLD <code>book_files</code> row <code>is_latest=false</code> → (7) DELETE OLD RS review file. Step 6 happens BEFORE step 7 so that even if the RS DELETE fails the loader already sees the new file as authoritative.</p>
+
+  <p class="answer"><span class="letter">L.</span> <strong class="ok">Reuse existing proven upload architecture.</strong> The replacement path uses the same signed-URL + temp-bucket upload pattern that the first-upload path already uses. The temp bucket is configurable via <code>input.tempBucket</code>. The signed-URL TTL defaults to 3600s and is overridable.</p>
+
+  <p class="answer"><span class="letter">M.</span> <strong class="ok">4 failure cases A–D are short-circuited with structured statuses.</strong>
+    <br><strong>A.</strong> New RS upload fails (POST returns non-2xx) — old file is untouched, no DB mutation, no DELETE. Returns <code>{ok: false, status: 502}</code>.
+    <br><strong>B.</strong> DB INSERT fails after the new RS file was created — orchestrator attempts to delete the orphan new RS file; the result of that attempt is reported in <code>orphan_cleanup</code>. Returns <code>{ok: false, status: 500}</code>.
+    <br><strong>C.</strong> RS DELETE returns non-2xx (and not 404) — new file is already authoritative; orchestrator reports <code>cleanup_pending</code> in the success result. Returns <code>{ok: true, cleanup_pending: {old_review_file_id, reason}}</code>.
+    <br><strong>D.</strong> RS DELETE returns 404 — old file already gone, treated as success. Returns <code>{ok: true}</code> with no <code>cleanup_pending</code>.
+  </p>
+
+  <p class="answer"><span class="letter">N.</span> <strong class="ok">No fake cross-system transaction.</strong> The brief explicitly forbids unsafe fake transactions across ReviewStudio + Postgres. We do not run them. The new file is fully uploaded to RS, the new <code>book_files</code> row is fully committed, the old row is marked superseded, and only then is the old RS file deleted. The loader filter (<code>is_latest IS DISTINCT FROM false</code>) makes step 6 sufficient to declare the replacement authoritative from the UI's perspective; the RS DELETE is treated as a best-effort cleanup with a <code>cleanup_pending</code> flag.</p>
+
+  <p class="answer"><span class="letter">O.</span> <strong class="ok">Frontend: Upload/Replace label swap.</strong> The cover and manuscript buttons read <code>Upload manuscript</code> / <code>Upload cover</code> when no persisted file exists for that <code>section_key</code>, and <code>Replace manuscript</code> / <code>Replace cover</code> when a persisted file exists. A <code>data-upload-mode</code> attribute carries the mode for CSS / test inspection. Frontend T8 S1 + S2 assert both states.</p>
+
+  <p class="answer"><span class="letter">P.</span> <strong class="ok">Frontend: in-flight cross-disable.</strong> While a real upload is in flight (the <code>uploadState.busy</code> signal), the other file's upload control AND both Save controls are disabled, and the in-flight button shows <code>Uploading…</code> or <code>Replacing…</code> depending on mode. This is the same T7 symmetric concurrency guard extended to the second upload control. Frontend T7 + T8 S4 assert this.</p>
+
+  <p class="answer"><span class="letter">Q.</span> <strong class="ok">Frontend: View button visual fix.</strong> View Manuscript and View Cover render as <code>&lt;a class="kdp-btn"&gt;</code> with no text-decoration, vertically centered content (align-items: center), in the same yellow button family as Upload/Replace. CSS additions are scoped to the <code>a.kdp-btn</code> selector so they do not leak to other anchors. Frontend T8 S3 asserts class, no underline, alignment, and href correctness.</p>
+
+  <p class="answer"><span class="letter">R.</span> <strong class="ok">Frontend: cover thumbnail refresh.</strong> After a successful cover replacement, the T6 authoritative refresh (already wired) re-fetches <code>loadEmployeePage</code> and updates <code>serverFiles</code>. The <code>persistedCover</code> selector picks the new file (newest <code>updated_at</code>), and the <code>coverPreviewUrl</code> derivation feeds the <code>&lt;img class="kdp-cover-thumb"&gt;</code> <code>src</code>. The placeholder swaps back in if the image errors. Frontend T8 S5 asserts the post-refresh src contains the new preview marker (proving the server's authoritative refresh is the source of truth).</p>
+
+  <p class="answer"><span class="letter">S.</span> <strong class="ok">Tests + final state.</strong>
+    <br>• Orchestration unit tests: 15 / 15 pass.
+    <br>• Frontend verification: 185 / 185 pass.
+    <br>• Build: clean, no warnings.
+    <br>• Security profile: updated with the new "Employee Writes — Content File Replacement Boundary" section.
+    <br>• No commit, no push, no live contract test, no full release security audit (per the brief).
+    <br>• Ready for the operator to run ONE disposable replacement against staging.
+  </p>
+
+  <h2>What was NOT touched (per the brief)</h2>
+  <ul>
+    <li>RS file versioning — not introduced.</li>
+    <li><code>PUT</code> overwrite — not used.</li>
+    <li><code>/remote/version</code> endpoint — not used.</li>
+    <li>ReviewStudio Project / Review lifecycle — untouched (no delete, no create).</li>
+    <li>Pricing, Details, Admin pages — untouched.</li>
+    <li>Authentication / authorization model — untouched.</li>
+    <li>ReviewStudio credentials — not exposed in any browser artifact, response field, or log line.</li>
+    <li>Generic ReviewStudio proxy — not created. The Edge Function is a single-purpose upload/replacement action.</li>
+    <li>Full release security audit — out of scope; only the write boundary section of <code>SECURITY_PROFILE.md</code> was updated.</li>
+    <li>Git commit / push — not performed (per the brief).</li>
+  </ul>
+
+  <h2>Operator runbook for the manual disposable test</h2>
+  <ol>
+    <li>Pick a real book_id + employee scoped access_token from a non-production staging tenant. Confirm there is already a manuscript and a cover <code>book_files</code> row (so the replacement path is exercised, not the first-upload path).</li>
+    <li>Open the React app shell staging page. Use the existing fixture or a fresh disposable book — do not run against any real customer manuscript.</li>
+    <li>Click the now-labelled "Replace manuscript" button, choose a small disposable file (e.g. a 1-page PDF), confirm the upload completes, the button label remains "Replace manuscript", and a second reload shows the new <code>reviewstudio_file_id</code> in the row.</li>
+    <li>Inspect the OLD <code>review_file_id</code> in the RS dashboard — confirm the file is gone (HTTP 204 from the DELETE).</li>
+    <li>Repeat steps 3–4 for the cover. The cover thumbnail should refresh to the new preview after the authoritative refresh lands.</li>
+    <li>Verify <code>book_files</code> for that book: exactly one row per <code>section_key</code> with <code>is_latest=true</code>. The old row should have <code>is_latest=false</code> and is still in the table (it is the reconciliation job's responsibility to hard-delete it after the RS DELETE is confirmed).</li>
+    <li>Capture the run output and attach to the operator log. Do NOT commit or push from this session.</li>
+  </ol>
+
+  <h2>Remaining uncertainty / follow-up</h2>
+  <ul>
+    <li>The reconciliation job that hard-deletes <code>is_latest=false</code> rows after the RS DELETE is confirmed is out of scope here. Until that job exists, superseded rows accumulate in <code>book_files</code>; the loader ignores them, so the UI is unaffected.</li>
+    <li>The <code>cleanup_pending</code> flag is set in the orchestrator result when the RS DELETE fails. A future reconciliation loop should consume it (or read <code>book_files.is_latest=false</code> rows + a stored <code>metadata.replaces_review_file_id</code>) to retry the DELETE. This task does not implement that loop.</li>
+    <li>No live contract test was performed against <code>iwdnow.reviewstudio.com</code>. The unit + frontend tests are sufficient to demonstrate the local contract but a real RS round-trip is the operator's responsibility.</li>
+    <li>If a future requirement introduces RS file versioning, the loader filter (<code>is_latest IS DISTINCT FROM false</code>) still works as a latest-wins selector, but the orchestrator would need to stop deleting the old RS file on replacement — instead it would call the versioning endpoint. Out of scope here.</li>
+  </ul>
+
+  <hr>
+  <p class="small">
+    Report generated 2026-09-05 by Claude Code. The plan, the orchestrator, the wiring, the loader filter, the frontend labels, the in-flight guard, the View button visual fix, the cover refresh, the unit tests, the frontend tests, the build, and the security profile update were all completed in this session. No git operations were performed. The next step is the operator's manual disposable replacement against staging.
+  </p>
+</main>
+</body>
+</html>

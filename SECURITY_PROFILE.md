@@ -223,6 +223,61 @@ Required-field rules must be enforced server-side on completion.
 
 Draft saves may be more permissive only when the workflow explicitly allows incomplete drafts.
 
+## Employee Writes — Content File Replacement Boundary
+
+**Added 2026-09-05 with the true-replacement flow.**
+
+The Content employee upload path now performs a TRUE file replacement
+(POST new file → mark old `book_files.is_latest=false` → DELETE the old
+ReviewStudio review file). This is a privileged write boundary because the
+`uploadContentFileToReviewStudio` Edge Function now performs a server-side
+`DELETE` against `https://iwdnow.reviewstudio.com` (account
+`iwdnow.reviewstudio.com`, ReviewStudio API v2.1).
+
+Hard rules — enforced by the Edge Function, NOT the browser:
+
+1. The browser MUST NOT send `reviewstudio_review_id`,
+   `reviewstudio_file_id`, or any other ReviewStudio identifier in the
+   replacement request body or query string. The server resolves them
+   from the trusted `book_files` row (`is_latest IS DISTINCT FROM false`).
+2. The browser MUST NOT receive `X-REVIEWSTUDIO-EMAIL` or
+   `X-REVIEWSTUDIO-TOKEN`. They are loaded server-side from a secrets
+   store (currently Supabase Edge Function secrets) and used only inside
+   the Edge Function runtime. The Edge Function response only echoes
+   `reviewstudio_file_url` (public on the ReviewStudio side) and the new
+   persisted `book_files.id`. No ReviewStudio credentials appear in any
+   response field.
+3. The replacement request must include the same scoped `access_token`
+   and `book_id` already validated for the initial upload path. Token
+   scope is re-checked server-side.
+4. The replacement is rejected (HTTP 409) if there is no current
+   `book_files` row with `is_latest IS DISTINCT FROM false` for the
+   requested `(book_id, file_type, section_key)`. This is the
+   orchestration's "no current row → fall back to first-upload path"
+   branch.
+5. The safe replacement order is: resolve current row → POST new
+   ReviewStudio file → persist new `book_files` row (`is_latest=true`)
+   → mark old row `is_latest=false` → DELETE old ReviewStudio file. The
+   DELETE is the LAST step. If the new `book_files` insert fails, the
+   orphan new RS file is deleted and the replacement is rolled back.
+   If the RS DELETE fails (5xx / network error), the new `book_files`
+   row is already authoritative; the failure is reported as
+   `cleanup_pending` and a reconciliation job (out of scope for this
+   task) is responsible for the hard delete of the old `book_files`
+   row.
+6. The Edge Function does NOT call `DELETE /reviews/{review_id}/files`
+   with `delete_all_versions=true`. Each old file is deleted
+   independently. There is no automatic retry of the DELETE; the
+   `cleanup_pending` flag is the contract.
+7. The Edge Function does NOT call `response.json()` after a 204. The
+   ReviewStudio DELETE contract is HTTP 204 with no body.
+
+The loader (`loadEmployeePage`) reads `book_files` with
+`is_latest IS DISTINCT FROM false`, so the most-recent successful
+upload is the only one the employee sees — superseded rows are
+invisible to the UI but remain in the table for the reconciliation
+job's hard-delete pass.
+
 ## Admin Review Writes
 
 Every admin decision save must re-check:
@@ -585,3 +640,73 @@ Re-run the security router and update this profile before introducing any new ca
 - new third-party frontend component/runtime libraries with meaningful security impact
 
 Do not let an architecture experiment silently become production architecture without this review.
+
+# 2026-09-02 Security Pack Alignment
+
+The project security profile has been re-routed against the expanded security rule pack.
+
+This update does not change the existing KDP authentication or authorization architecture. The scoped opaque-token model, protected Supabase Edge Functions, server-authoritative workflow state, and existing frontend trust boundary remain authoritative.
+
+## Additional Active Security Areas
+
+The following newer security areas are now explicitly applicable where the corresponding capability is exercised:
+
+- `SECURITY_DATABASE.md`
+  - Supabase/Postgres access, grants, authorization boundaries, privileged fields, backup/recovery, and destructive migration review.
+
+- Supabase rules in `SECURITY_PLATFORM_SPECIALIZED.md`
+  - Edge Function authorization, service-role containment, RLS/policy review, RPC privilege review, and cross-book/cross-user negative testing.
+
+- File/Object Storage rules in `SECURITY_PLATFORM_SPECIALIZED.md`
+  - manuscript/cover authorization, server-side type/size/path validation, signed URL handling, and private file access controls.
+
+- Webhook rules in `SECURITY_PLATFORM_SPECIALIZED.md`
+  - ReviewStudio webhook authenticity, payload validation, replay/duplicate protection, and idempotent privileged state changes.
+
+- `SECURITY_DEPLOYMENT.md`
+  - applies to any internet-facing staging or production host.
+  - Cloudflare Quick Tunnel remains development/staging-only and is not a production security boundary.
+  - production hosting must separately verify HTTPS/TLS, exposed services, debug surfaces, security headers where appropriate, logging, rollback, health checks, and environment separation.
+
+- `SECURITY_DEPENDENCIES.md`
+  - dependency identity, lockfile integrity, advisory review, build artifacts, unnecessary dependencies, and tool/plugin permissions.
+
+## Additional Implementation Requirements
+
+For security-sensitive API requests:
+
+- validate request method, shape, IDs, sizes, and allowed values server-side
+- reject unexpected privileged fields where practical
+- authorization must be checked independently of browser state
+- downstream failures must not create a fail-open authorization or workflow state
+- state-changing requests must tolerate accidental duplicate execution appropriately
+
+For browser/frontend builds:
+
+- review final browser bundles and source maps for secrets/debug exposure
+- do not treat CORS, hidden URLs, disabled controls, or GHL page access as authorization
+- keep raw access tokens out of logs, screenshots, saved debug artifacts, localStorage, and sessionStorage
+
+For production-critical durable data:
+
+- define database/storage backup scope and retention
+- protect backups as production data
+- verify that backups are actually created
+- perform a safe restore test before production approval
+
+## Required Production Security Review
+
+Before production approval:
+
+1. Run the current `SECURITY_RELEASE_CHECKLIST`.
+2. Run applicable report-only audits for:
+   - exposed secrets
+   - authentication / authorization / IDOR
+   - database / RLS / storage access
+   - untrusted input to dangerous sinks
+   - money / resource / abuse paths where applicable
+3. Classify findings before implementing fixes.
+4. Re-run relevant negative/adversarial tests after fixes.
+5. Do not call the system production-ready until applicable P0/P1 findings are resolved or explicitly accepted by the authorized owner.
+
+The existing functional-first development sequence remains valid. These requirements should be applied incrementally as relevant capabilities are implemented and then verified comprehensively before production.
