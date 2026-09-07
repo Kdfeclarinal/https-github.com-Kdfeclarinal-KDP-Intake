@@ -66,12 +66,18 @@ function makeSupabase(opts: {
   currentRow?: { id: string; reviewstudio_review_id: string; reviewstudio_file_id: string; reviewstudio_project_id: string } | null;
   insertError?: { message: string };
   supersedeError?: { message: string };
+  promotionResult?: boolean;
   tempUploadError?: { message: string };
   signedUrlError?: { message: string };
 } = {}) {
   const calls: { method: string; table?: string; payload?: unknown }[] = [];
 
   const supabase = {
+    async rpc(name: string, payload: unknown) {
+      calls.push({ method: "rpc", table: name, payload });
+      if (opts.supersedeError) return { data: null, error: opts.supersedeError };
+      return { data: opts.promotionResult ?? true, error: null };
+    },
     from(table: string) {
       return {
         select() {
@@ -199,7 +205,7 @@ const INPUT_BASE = {
 // ============================================================
 
 test("replace: happy path returns ok with new ids and cleanup_pending undefined when DELETE 204", async () => {
-  const { supabase } = makeSupabase();
+  const { supabase, calls } = makeSupabase();
   const { fetchImpl, seen } = makeFetch([
     { status: 201, body: { id: "file-new", review_url: "https://reviewstudio.example/file-new", processing_status: "ok" } },
     { status: 204 },
@@ -217,6 +223,19 @@ test("replace: happy path returns ok with new ids and cleanup_pending undefined 
   assert(seen[0].url === BASE_URL + "/reviews/rev-1/files", "POST url");
   assert(seen[1].url === BASE_URL + "/reviews/rev-1/files/file-old", "DELETE url targets old file");
   assert(seen[1].method === "DELETE", "DELETE method");
+  const insert = calls.find((call) => call.method === "insert") as any;
+  assertEq(insert?.payload?.is_latest, false, "new row is staged non-current");
+  assert(calls.some((call) => call.method === "rpc" && call.table === "promote_replacement_book_file"), "transactional promotion RPC called");
+});
+
+test("replace: concurrent promotion conflict fails without deleting old RS file", async () => {
+  const { supabase } = makeSupabase({ promotionResult: false });
+  const { fetchImpl, seen } = makeFetch([
+    { status: 201, body: { id: "file-new", review_url: "https://rs.example/new" } },
+  ]);
+  const result = await replaceContentFile({ ...INPUT_BASE, supabase, fetchImpl });
+  assertEq(result.ok, false, "promotion conflict fails");
+  assertEq(seen.length, 1, "old RS file is not deleted");
 });
 
 test("replace: no current row -> 409 with descriptive error, no RS call", async () => {
@@ -365,7 +384,7 @@ test("replace: POST 201 without review_file id -> 502 (contract drift), no inser
 test("verifier: 200 valid body -> present, ids preserved, anyIndeterminate=false", async () => {
   const { fetchImpl } = makeFetch([
     { status: 200, body: { id: "proj-1" } },
-    { status: 200, body: { id: "rev-1" } },
+    { status: 200, body: { id: "rev-1", project: { id: "proj-1" } } },
   ]);
   const r = await verifyReviewStudioResources({ candidate: { projectId: "proj-1", reviewId: "rev-1" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
   assertEq(r.projectId, "proj-1", "projectId preserved");
@@ -395,9 +414,10 @@ test("verifier: 410 -> missing", async () => {
   ]);
   const r = await verifyReviewStudioResources({ candidate: { projectId: "proj-x", reviewId: "rev-1" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
   assertEq(r.projectId, "", "410 -> missing -> blanked");
-  assertEq(r.reviewId, "rev-1", "200 OK -> preserved");
+  assertEq(r.reviewId, "rev-1", "id retained only for fail-closed diagnostics");
   assertEq(r.projectStatus, "missing", "missing");
-  assertEq(r.reviewStatus, "present", "present");
+  assertEq(r.reviewStatus, "indeterminate", "review cannot be reused without its project");
+  assertEq(r.anyIndeterminate, true, "split pair fails closed");
 });
 
 test("verifier: 200 with errors object containing 'not found' -> missing", async () => {
@@ -408,7 +428,8 @@ test("verifier: 200 with errors object containing 'not found' -> missing", async
   const r = await verifyReviewStudioResources({ candidate: { projectId: "proj-x", reviewId: "rev-1" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
   assertEq(r.projectId, "", "blanked");
   assertEq(r.projectStatus, "missing", "classified missing");
-  assertEq(r.reviewStatus, "present", "review still present");
+  assertEq(r.reviewStatus, "indeterminate", "review cannot be reused without its project");
+  assertEq(r.anyIndeterminate, true, "split pair fails closed");
 });
 
 test("verifier: 200 with generic errors object -> indeterminate, id preserved, anyIndeterminate=true", async () => {
@@ -475,6 +496,44 @@ test("verifier: 200 with malformed body -> indeterminate", async () => {
   assertEq(r.anyIndeterminate, true, "anyIndeterminate=true");
 });
 
+test("verifier: 200 with empty body -> indeterminate", async () => {
+  const { fetchImpl } = makeFetch([{ status: 200, body: "" }]);
+  const r = await verifyReviewStudioResources({ candidate: { projectId: "proj-x" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
+  assertEq(r.projectStatus, "indeterminate", "empty body is not confirmation");
+  assertEq(r.anyIndeterminate, true, "caller must fail closed");
+});
+
+test("verifier: review must belong to the stored project", async () => {
+  const { fetchImpl } = makeFetch([
+    { status: 200, body: { id: "proj-1" } },
+    { status: 200, body: { id: "rev-1", project: { id: "proj-other" } } },
+  ]);
+  const r = await verifyReviewStudioResources({ candidate: { projectId: "proj-1", reviewId: "rev-1" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
+  assertEq(r.reviewStatus, "indeterminate", "mismatched relationship is not reusable");
+  assertEq(r.anyIndeterminate, true, "caller must fail closed");
+});
+
+test("verifier: present review is not reusable when its stored project is missing", async () => {
+  const { fetchImpl } = makeFetch([
+    { status: 404 },
+    { status: 200, body: { id: "rev-1", project: { id: "proj-old" } } },
+  ]);
+  const r = await verifyReviewStudioResources({ candidate: { projectId: "proj-missing", reviewId: "rev-1" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
+  assertEq(r.reviewStatus, "indeterminate", "orphaned pair requires operator review");
+  assertEq(r.anyIndeterminate, true, "caller must not create/reuse a split pair");
+});
+
+test("verifier: lone review id is indeterminate and cannot be paired with a new project", async () => {
+  const { fetchImpl } = makeFetch([
+    { status: 200, body: { id: "rev-1", project: { id: "proj-old" } } },
+  ]);
+  const result = await verifyReviewStudioResources({
+    candidate: { reviewId: "rev-1" }, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS,
+  });
+  assertEq(result.reviewStatus, "indeterminate", "lone review must not be reusable");
+  assertEq(result.anyIndeterminate, true, "caller must fail closed");
+});
+
 // ============================================================
 // reconcileBookFiles — classification & state-mutation tests
 // ============================================================
@@ -507,6 +566,18 @@ function rowReconcileSupabase(opts: { dbWriteFails?: boolean; dbWrites?: any[] }
   };
   return { supabase, updates };
 }
+
+test("reconcile: 200 with empty body is indeterminate and preserves row", async () => {
+  const rows: any[] = [
+    { id: "row-1", book_id: "book-1", file_type: "manuscript", reviewstudio_review_id: "rev-1", reviewstudio_file_id: "file-1", metadata: {} },
+  ];
+  const { supabase, updates } = rowReconcileSupabase();
+  const { fetchImpl } = makeFetch([{ status: 200, body: "" }]);
+  const r = await reconcileBookFiles({ rows, supabase, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
+  assertEq(r.counts.indeterminate, 1, "empty body is indeterminate");
+  assertEq(r.verified.length, 1, "row preserved on indeterminate");
+  assertEq(updates.length, 0, "no stale write");
+});
 
 test("reconcile: 404 -> row marked stale, is_latest=false, reconciliation_reason set, replaced_by_file_id NOT set", async () => {
   const rows = [

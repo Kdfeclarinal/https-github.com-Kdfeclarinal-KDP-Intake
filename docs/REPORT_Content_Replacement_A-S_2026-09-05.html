@@ -61,7 +61,7 @@
       <code>uploadContentFileToReviewStudio</code> Edge Function now reuses the existing
       Manuscript Review and Cover Review (no new RS project/review), uploads the new file into
       the SAME review, persists the new <code>book_files</code> row with
-      <code>is_latest=true</code>, marks the old row <code>is_latest=false</code>, and only
+      staged with <code>is_latest=false</code>, atomically promotes it while marking the old row <code>is_latest=false</code>, and only
       then DELETEs the old ReviewStudio file via
       <code>DELETE /reviews/{review_id}/files/{review_file_id}</code>. The final
       authoritative state exposes at most one current manuscript and at most one current
@@ -69,7 +69,7 @@
     </p>
     <p>
       The loader (<code>loadEmployeePage</code>) was updated to filter
-      <code>book_files</code> to <code>is_latest IS DISTINCT FROM false</code>, so
+      <code>book_files</code> to <code>is_latest = true</code>, so
       superseded rows become invisible to the employee UI without being hard-deleted (a
       reconciliation job, out of scope here, is responsible for the hard delete).
     </p>
@@ -131,9 +131,9 @@ dist/app.js   584.43 kB │ gzip: 141.00 kB
 
   <p class="answer"><span class="letter">I.</span> <strong class="ok">Server-side validation reuses the existing upload guards.</strong> The replacement path in <code>uploadContentFileToReviewStudio_reviewstudio_flow.ts</code> applies the same checks as the first-upload path: scoped <code>access_token</code>, <code>book_id</code> ownership, employee may modify Content, <code>file_type</code> ∈ {manuscript, cover}, <code>section_key</code> ∈ {content.manuscript, content.cover}, current workflow state permits upload. The new <code>_replaceOrchestration.ts</code> then runs the 7-step safe replacement order.</p>
 
-  <p class="answer"><span class="letter">J.</span> <strong class="ok">No RS credentials reach the browser.</strong> The Edge Function loads <code>X-REVIEWSTUDIO-EMAIL</code> and <code>X-REVIEWSTUDIO-TOKEN</code> from server-side secrets and uses them only in the Edge Function runtime. The response shape returns the new <code>book_files.id</code>, <code>reviewstudio_file_id</code> (an opaque identifier, not a credential), <code>reviewstudio_file_url</code> (public on the RS side), <code>processing_status</code>, and optional <code>cleanup_pending</code>. No <code>X-REVIEWSTUDIO-*</code> header is ever set in the response, and no credential appears in any response field. Unit scenario 13 asserts the result shape contains no credentials.</p>
+  <p class="answer"><span class="letter">J.</span> <strong class="ok">No RS credentials or internal identifiers reach the browser.</strong> The Edge Function loads <code>X-REVIEWSTUDIO-EMAIL</code> and <code>X-REVIEWSTUDIO-TOKEN</code> from server-side secrets and uses them only in the Edge Function runtime. Upload responses contain only success/operation and an optional boolean cleanup status; the protected loader returns the public ReviewStudio file URL used by the UI. No <code>X-REVIEWSTUDIO-*</code> header or ReviewStudio project/review/file identifier is returned.</p>
 
-  <p class="answer"><span class="letter">K.</span> <strong class="ok">Safe replacement order.</strong> The orchestrator runs: (1) resolve current persisted row → (2) upload new file to Supabase temp storage + get signed URL → (3) POST new file into SAME Review → (4) verify RS accepted (status 2xx, non-empty <code>review_file.id</code>) → (5) persist new <code>book_files</code> row with <code>is_latest=true</code> → (6) mark OLD <code>book_files</code> row <code>is_latest=false</code> → (7) DELETE OLD RS review file. Step 6 happens BEFORE step 7 so that even if the RS DELETE fails the loader already sees the new file as authoritative.</p>
+  <p class="answer"><span class="letter">K.</span> <strong class="ok">Safe replacement order.</strong> The orchestrator runs: (1) resolve current persisted row → (2) upload new file to Supabase temp storage + get signed URL → (3) POST new file into SAME Review → (4) verify RS accepted (status 2xx, non-empty <code>review_file.id</code>) → (5) persist the new <code>book_files</code> row staged with <code>is_latest=false</code> → (6) atomically promote NEW and supersede OLD through <code>promote_replacement_book_file</code> → (7) DELETE OLD RS review file. Step 6 is transactional and happens before step 7, so a failed or concurrent promotion never deletes the old ReviewStudio file.</p>
 
   <p class="answer"><span class="letter">L.</span> <strong class="ok">Reuse existing proven upload architecture.</strong> The replacement path uses the same signed-URL + temp-bucket upload pattern that the first-upload path already uses. The temp bucket is configurable via <code>input.tempBucket</code>. The signed-URL TTL defaults to 3600s and is overridable.</p>
 
@@ -144,7 +144,7 @@ dist/app.js   584.43 kB │ gzip: 141.00 kB
     <br><strong>D.</strong> RS DELETE returns 404 — old file already gone, treated as success. Returns <code>{ok: true}</code> with no <code>cleanup_pending</code>.
   </p>
 
-  <p class="answer"><span class="letter">N.</span> <strong class="ok">No fake cross-system transaction.</strong> The brief explicitly forbids unsafe fake transactions across ReviewStudio + Postgres. We do not run them. The new file is fully uploaded to RS, the new <code>book_files</code> row is fully committed, the old row is marked superseded, and only then is the old RS file deleted. The loader filter (<code>is_latest IS DISTINCT FROM false</code>) makes step 6 sufficient to declare the replacement authoritative from the UI's perspective; the RS DELETE is treated as a best-effort cleanup with a <code>cleanup_pending</code> flag.</p>
+  <p class="answer"><span class="letter">N.</span> <strong class="ok">No fake cross-system transaction.</strong> The brief explicitly forbids unsafe fake transactions across ReviewStudio + Postgres. We do not run them. The new file is fully uploaded to RS, the new <code>book_files</code> row is staged, the database RPC atomically promotes it while superseding the old row, and only then is the old RS file deleted. The loader filter (<code>is_latest = true</code>) exposes only the promoted row; the RS DELETE is treated as a best-effort cleanup with a <code>cleanup_pending</code> flag.</p>
 
   <p class="answer"><span class="letter">O.</span> <strong class="ok">Frontend: Upload/Replace label swap.</strong> The cover and manuscript buttons read <code>Upload manuscript</code> / <code>Upload cover</code> when no persisted file exists for that <code>section_key</code>, and <code>Replace manuscript</code> / <code>Replace cover</code> when a persisted file exists. A <code>data-upload-mode</code> attribute carries the mode for CSS / test inspection. Frontend T8 S1 + S2 assert both states.</p>
 
@@ -193,7 +193,7 @@ dist/app.js   584.43 kB │ gzip: 141.00 kB
     <li>The reconciliation job that hard-deletes <code>is_latest=false</code> rows after the RS DELETE is confirmed is out of scope here. Until that job exists, superseded rows accumulate in <code>book_files</code>; the loader ignores them, so the UI is unaffected.</li>
     <li>The <code>cleanup_pending</code> flag is set in the orchestrator result when the RS DELETE fails. A future reconciliation loop should consume it (or read <code>book_files.is_latest=false</code> rows + a stored <code>metadata.replaces_review_file_id</code>) to retry the DELETE. This task does not implement that loop.</li>
     <li>No live contract test was performed against <code>iwdnow.reviewstudio.com</code>. The unit + frontend tests are sufficient to demonstrate the local contract but a real RS round-trip is the operator's responsibility.</li>
-    <li>If a future requirement introduces RS file versioning, the loader filter (<code>is_latest IS DISTINCT FROM false</code>) still works as a latest-wins selector, but the orchestrator would need to stop deleting the old RS file on replacement — instead it would call the versioning endpoint. Out of scope here.</li>
+    <li>If a future requirement introduces RS file versioning, the loader's explicit <code>is_latest = true</code> contract remains the current-row selector, but the orchestrator would need to stop deleting the old RS file on replacement — instead it would call the versioning endpoint. Out of scope here.</li>
   </ul>
 
   <hr>

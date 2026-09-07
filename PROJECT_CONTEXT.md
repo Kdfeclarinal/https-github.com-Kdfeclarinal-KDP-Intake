@@ -103,7 +103,7 @@ Do not assume this list is exhaustive. Repository/database inspection remains au
 
 ### Edge Functions
 
-Current known functions include:
+Current known deployed/function contracts referenced by the frontend include:
 
 ```text
 loadEmployeePage
@@ -111,6 +111,13 @@ saveEmployeeStep
 loadAdminReviewPage
 saveAdminReviewPage
 ```
+
+Tracked source is present for `loadEmployeePage` and the Content upload path.
+No tracked source, migration, deployment artifact, or Git history for
+`saveEmployeeStep` exists in this repository as of 2026-09-07; only its frontend
+HTTP contract and historical notes are present. Do not treat its server-side
+validation or workflow transition behavior as repository-verified until a
+read-only deployed-source/database capture is obtained.
 
 Other submission, ReviewStudio, finalization, or synchronization functions may exist and must be verified from the repository before use.
 
@@ -202,12 +209,12 @@ Do not assume every legacy Bookshelf edge case has been regression-tested recent
 
 Status: **VERIFIED / largely working**
 
-Known behavior includes:
+Known frontend behavior includes:
 
 - draft save
 - Save & Continue
-- server-side required-field validation
-- workflow progress/unlock behavior
+- navigation only after the save response reports server-authoritative Details
+  completion and Content unlock
 - Supabase persistence
 - searchable book fields synchronized from Details where intended
 
@@ -215,7 +222,7 @@ Known behavior includes:
 
 ## Employee Content
 
-Status: **PARTIAL / largely working with one known validation gap discovered**
+Status: **PARTIAL / frontend and upload boundary verified; save backend source missing**
 
 Known working behavior includes:
 
@@ -233,7 +240,10 @@ Known issue discovered during current work:
 - At least one submitted/reviewing book legitimately contains no DRM choice because the old workflow allowed it.
 - Do not invent or auto-fill a Yes/No answer for legacy submissions.
 
-A `saveEmployeeStep` DRM-required update has been prepared in the development conversation, but deployment/runtime verification of that exact change must be confirmed from repository/environment evidence before marking it complete.
+The repository has no `saveEmployeeStep` implementation to verify the server-side
+DRM rule, other Content completion rules, or Pricing unlock transition. A
+read-only capture of the deployed function and relevant database/RPC contract is
+required before those claims can be promoted to repository-verified behavior.
 
 Target rule going forward:
 
@@ -244,6 +254,28 @@ DRM may remain unanswered.
 Save & Continue / complete Content:
 DRM must be exactly one approved radio value.
 ```
+
+Verified hardening rules (2026-09-07):
+
+- `loadEmployeePage` requires an unrevoked, unexpired, exact employee-role token
+  directly bound to the requested book with exact action
+  `load_employee_page`; broad bookshelf actions do not authorize a book read.
+  Unknown steps and locked future steps are denied from authoritative workflow
+  state.
+- Read-triggered ReviewStudio reconciliation may mutate `book_files` only when
+  that token additionally carries `upload_content_file_to_reviewstudio` and the
+  authoritative book status is `draft` or `needs_updates`.
+- Content file presence is derived from the protected loader's reconciled current
+  file set; stale saved upload booleans cannot complete Content.
+- Draft serialization preserves unanswered AI-content, publishing-rights, and
+  adult-content choices rather than inventing defaults.
+- ReviewStudio 200 responses require a valid expected resource object; project
+  and review reuse must be a confirmed related pair when relationship data is
+  available.
+- Replacement rows are staged non-current and promoted atomically by the local
+  `promote_replacement_book_file` migration/RPC. The migration is prepared but
+  not applied; deployment must sequence the migration before compatible function
+  code.
 
 ---
 

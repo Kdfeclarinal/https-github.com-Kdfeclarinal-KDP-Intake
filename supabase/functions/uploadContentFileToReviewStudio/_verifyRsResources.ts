@@ -76,32 +76,31 @@ function rsUrl(base: string, path: string): string {
 function classifyRsGetResponse(
   status: number,
   bodyText: string,
-): VerifierClassification {
+  expectedId: string,
+): { status: VerifierClassification; data?: Record<string, any> } {
   if (status === 200) {
-    if (bodyText) {
-      try {
-        const data = JSON.parse(bodyText);
-        if (data && typeof data === "object") {
-          const errs = (data as any).errors || (data as any).error;
-          if (errs) {
-            const txt = typeof errs === "string" ? errs : JSON.stringify(errs);
-            if (/not\s*found|deleted|missing/i.test(txt)) {
-              return "missing";
-            }
-            // Generic error body without a "not found" signature
-            // is treated as indeterminate to avoid falsely
-            // invalidating a stored id.
-            return "indeterminate";
-          }
-        }
-      } catch (_e) {
-        return "indeterminate";
+    if (!bodyText) return { status: "indeterminate" };
+    try {
+      const parsed = JSON.parse(bodyText);
+      const data = parsed?.data && typeof parsed.data === "object" ? parsed.data : parsed;
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        return { status: "indeterminate" };
       }
+      const errs = data.errors || data.error;
+      if (errs) {
+        const txt = typeof errs === "string" ? errs : JSON.stringify(errs);
+        return { status: /not\s*found|deleted|missing/i.test(txt) ? "missing" : "indeterminate" };
+      }
+      if (!data.id || String(data.id) !== String(expectedId)) {
+        return { status: "indeterminate" };
+      }
+      return { status: "present", data };
+    } catch (_e) {
+      return { status: "indeterminate" };
     }
-    return "present";
   }
-  if (status === 404 || status === 410) return "missing";
-  return "indeterminate";
+  if (status === 404 || status === 410) return { status: "missing" };
+  return { status: "indeterminate" };
 }
 
 async function fetchWithTimeout(
@@ -139,7 +138,7 @@ async function verifyOne(
   rsHeaders: ReviewStudioAuthHeaders,
   resource: "projects" | "reviews",
   id: string,
-): Promise<VerifierClassification> {
+): Promise<{ status: VerifierClassification; data?: Record<string, any> }> {
   const url = rsUrl(
     rsBaseUrl,
     "/" + resource + "/" + encodeURIComponent(String(id)),
@@ -153,7 +152,7 @@ async function verifyOne(
       FETCH_TIMEOUT_MS,
     );
   } catch (_e) {
-    return "indeterminate";
+    return { status: "indeterminate" };
   }
   let bodyText = "";
   try {
@@ -161,7 +160,7 @@ async function verifyOne(
   } catch (_e) {
     // Body unreadable — use status alone.
   }
-  return classifyRsGetResponse(res.status, bodyText);
+  return classifyRsGetResponse(res.status, bodyText, id);
 }
 
 export async function verifyReviewStudioResources(input: {
@@ -174,7 +173,6 @@ export async function verifyReviewStudioResources(input: {
   const candidateReviewId = String(input.candidate?.reviewId || "").trim();
 
   // Run both checks in parallel when both ids are present.
-  const tasks: Array<Promise<VerifierClassification>> = [];
   const projectPromise = candidateProjectId
     ? verifyOne(
         input.fetchImpl,
@@ -183,7 +181,7 @@ export async function verifyReviewStudioResources(input: {
         "projects",
         candidateProjectId,
       )
-    : Promise.resolve<VerifierClassification>("present");
+    : Promise.resolve({ status: "present" as VerifierClassification });
   const reviewPromise = candidateReviewId
     ? verifyOne(
         input.fetchImpl,
@@ -192,9 +190,31 @@ export async function verifyReviewStudioResources(input: {
         "reviews",
         candidateReviewId,
       )
-    : Promise.resolve<VerifierClassification>("present");
-  tasks.push(projectPromise, reviewPromise);
-  const [projectStatus, reviewStatus] = await Promise.all(tasks);
+    : Promise.resolve({ status: "present" as VerifierClassification });
+  const [projectResult, reviewResult] = await Promise.all([projectPromise, reviewPromise]);
+  const projectStatus = projectResult.status;
+  let reviewStatus = reviewResult.status;
+
+  // A review without its stored project cannot safely be combined with a newly
+  // created project. Keep the operation indeterminate until the pair can be
+  // captured or repaired authoritatively.
+  if (!candidateProjectId && candidateReviewId && reviewStatus === "present") {
+    reviewStatus = "indeterminate";
+  }
+
+  if (candidateProjectId && candidateReviewId && reviewStatus === "present") {
+    if (projectStatus !== "present") {
+      reviewStatus = "indeterminate";
+    } else {
+      const reviewProject = reviewResult.data?.project;
+      const relatedProjectId = reviewProject && typeof reviewProject === "object"
+        ? reviewProject.id
+        : reviewResult.data?.project_id;
+      if (!relatedProjectId || String(relatedProjectId) !== candidateProjectId) {
+        reviewStatus = "indeterminate";
+      }
+    }
+  }
 
   // Only confirmed-present ids are safe to reuse. Confirmed-missing
   // ids are blanked so the caller takes the create-new path.

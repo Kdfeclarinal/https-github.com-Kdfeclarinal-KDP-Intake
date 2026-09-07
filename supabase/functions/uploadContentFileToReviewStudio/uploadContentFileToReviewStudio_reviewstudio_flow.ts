@@ -16,8 +16,8 @@
 //   the replacement path. The orchestration is implemented in
 //   _replaceOrchestration.ts so it can be unit-tested without Deno.
 // - Replacement uploads the new file into the SAME Review, persists
-//   a new book_files row (is_latest=true), marks the old row
-//   superseded, and DELETEs the old ReviewStudio review file.
+//   a new book_files row staged as is_latest=false, atomically promotes it
+//   while superseding the old row, and DELETEs the old ReviewStudio review file.
 // - The OLD project and review are NEVER deleted.
 // - The OLD book_files row is NEVER hard-deleted; it is marked
 //   is_latest=false and a reconciliation job is responsible for
@@ -27,6 +27,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { replaceContentFile } from "./_replaceOrchestration.ts";
 import { verifyReviewStudioResources } from "./_verifyRsResources.ts";
+import { validateContentUpload } from "./_uploadValidation.ts";
+import {
+  publicFirstUploadResponse,
+  publicReplacementResponse,
+  publicUploadError,
+} from "./_publicResponse.ts";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -105,7 +111,6 @@ async function rsRequest(
     console.error("[ReviewStudio API Error]", {
       path,
       status: response.status,
-      response: data,
     });
 
     throw new AppError(
@@ -207,38 +212,8 @@ function validateUuid(value: string, fieldName: string) {
 }
 
 function validateFile(fileType: string, file: File) {
-  const name = String(file.name || "").toLowerCase();
-
-  if (!file.size) {
-    throw new AppError(400, "The selected file is empty.");
-  }
-
-  if (fileType === "manuscript") {
-    if (
-      name.endsWith(".pdf") ||
-      name.endsWith(".doc") ||
-      name.endsWith(".docx")
-    ) {
-      return;
-    }
-
-    throw new AppError(400, "Manuscript must be PDF, DOC, or DOCX.");
-  }
-
-  if (fileType === "cover") {
-    if (
-      name.endsWith(".jpg") ||
-      name.endsWith(".jpeg") ||
-      name.endsWith(".tif") ||
-      name.endsWith(".tiff")
-    ) {
-      return;
-    }
-
-    throw new AppError(400, "Cover must be JPG, JPEG, TIF, or TIFF.");
-  }
-
-  throw new AppError(400, "Invalid file_type. Use manuscript or cover.");
+  const error = validateContentUpload(fileType, file);
+  if (error) throw new AppError(400, error);
 }
 
 function safeFileName(name: string) {
@@ -506,7 +481,7 @@ async function findOrCreateClient(book: any, existingClientId: string) {
   const clientId = getId(created);
 
   if (!clientId) {
-    console.error("[ReviewStudio] Create client response:", created);
+    console.error("[ReviewStudio] Create client response did not contain an ID.");
     throw new AppError(502, "ReviewStudio did not return a client ID.");
   }
 
@@ -535,7 +510,7 @@ async function findOrCreateProject(
   const projectId = getId(created);
 
   if (!projectId) {
-    console.error("[ReviewStudio] Create project response:", created);
+    console.error("[ReviewStudio] Create project response did not contain an ID.");
     throw new AppError(502, "ReviewStudio did not return a project ID.");
   }
 
@@ -564,7 +539,7 @@ async function createReview(book: any, projectId: string, fileType: string) {
   const reviewId = getId(created);
 
   if (!reviewId) {
-    console.error("[ReviewStudio] Create review response:", created);
+    console.error("[ReviewStudio] Create review response did not contain an ID.");
     throw new AppError(502, "ReviewStudio did not return a review ID.");
   }
 
@@ -632,7 +607,7 @@ async function uploadReviewFile(
   const reviewFileId = getReviewFileId(data);
 
   if (!reviewFileId) {
-    console.error("[ReviewStudio] Upload file response:", data);
+    console.error("[ReviewStudio] Upload file response did not contain an ID.");
     throw new AppError(502, "ReviewStudio did not return a review file ID.");
   }
 
@@ -890,20 +865,14 @@ Deno.serve(async function (request) {
         },
       );
 
-      return json(200, {
-        ok: true,
-        book_id: bookId,
-        file_type: fileType,
-        operation: "replace",
-        book_file_id: replaceResult.book_file_id,
-        reviewstudio_review_id: replaceResult.reviewstudio_review_id,
-        reviewstudio_file_id: replaceResult.reviewstudio_file_id,
-        reviewstudio_file_url: replaceResult.reviewstudio_file_url,
-        processing_status: replaceResult.processing_status,
-        replaced_old_review_file_id:
-          replaceResult.replaced_old_review_file_id,
-        cleanup_pending: replaceResult.cleanup_pending || null,
-      });
+      return json(200, publicReplacementResponse({
+        bookId,
+        fileType,
+        bookFileId: replaceResult.book_file_id,
+        reviewstudioFileUrl: replaceResult.reviewstudio_file_url,
+        processingStatus: replaceResult.processing_status,
+        cleanupPending: replaceResult.cleanup_pending,
+      }));
     }
 
     // ----------------------------------------------------------------
@@ -971,19 +940,13 @@ Deno.serve(async function (request) {
       },
     );
 
-    return json(200, {
-      ok: true,
-      book_id: bookId,
-      file_type: fileType,
-      review_name: reviewName,
-      reviewstudio_client_id: clientId,
-      reviewstudio_project_id: projectId,
-      reviewstudio_review_id: reviewId,
-      reviewstudio_file_id: reviewFile.id,
-      reviewstudio_file_url: reviewFile.url,
-      processing_status: reviewFile.processingStatus,
-      stored_file: savedFile,
-    });
+    return json(200, publicFirstUploadResponse({
+      bookId,
+      fileType,
+      bookFileId: savedFile.id,
+      reviewstudioFileUrl: reviewFile.url,
+      processingStatus: reviewFile.processingStatus,
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const status = error instanceof AppError ? error.status : 500;
@@ -1002,7 +965,7 @@ Deno.serve(async function (request) {
 
     return json(status, {
       ok: false,
-      error: message,
+      error: publicUploadError(status, message),
     });
   }
 });

@@ -228,7 +228,8 @@ Draft saves may be more permissive only when the workflow explicitly allows inco
 **Added 2026-09-05 with the true-replacement flow.**
 
 The Content employee upload path now performs a TRUE file replacement
-(POST new file → mark old `book_files.is_latest=false` → DELETE the old
+(POST new file → transactionally promote the staged row and mark the old
+`book_files.is_latest=false` → DELETE the old
 ReviewStudio review file). This is a privileged write boundary because the
 `uploadContentFileToReviewStudio` Edge Function now performs a server-side
 `DELETE` against `https://iwdnow.reviewstudio.com` (account
@@ -239,25 +240,26 @@ Hard rules — enforced by the Edge Function, NOT the browser:
 1. The browser MUST NOT send `reviewstudio_review_id`,
    `reviewstudio_file_id`, or any other ReviewStudio identifier in the
    replacement request body or query string. The server resolves them
-   from the trusted `book_files` row (`is_latest IS DISTINCT FROM false`).
+   from the trusted `book_files` row (`is_latest = true`).
 2. The browser MUST NOT receive `X-REVIEWSTUDIO-EMAIL` or
    `X-REVIEWSTUDIO-TOKEN`. They are loaded server-side from a secrets
    store (currently Supabase Edge Function secrets) and used only inside
-   the Edge Function runtime. The Edge Function response only echoes
-   `reviewstudio_file_url` (public on the ReviewStudio side) and the new
-   persisted `book_files.id`. No ReviewStudio credentials appear in any
-   response field.
+   the Edge Function runtime. Upload responses do not expose ReviewStudio
+   or database identifiers. The protected loader exposes only the public
+   ReviewStudio file URL needed by the UI. No ReviewStudio credentials
+   appear in any response field.
 3. The replacement request must include the same scoped `access_token`
    and `book_id` already validated for the initial upload path. Token
    scope is re-checked server-side.
 4. The replacement is rejected (HTTP 409) if there is no current
-   `book_files` row with `is_latest IS DISTINCT FROM false` for the
+   `book_files` row with `is_latest = true` for the
    requested `(book_id, file_type, section_key)`. This is the
    orchestration's "no current row → fall back to first-upload path"
    branch.
 5. The safe replacement order is: resolve current row → POST new
-   ReviewStudio file → persist new `book_files` row (`is_latest=true`)
-   → mark old row `is_latest=false` → DELETE old ReviewStudio file. The
+   ReviewStudio file → persist the new `book_files` row staged with
+   `is_latest=false` → atomically promote the new row and supersede the old
+   row through `promote_replacement_book_file` → DELETE old ReviewStudio file. The
    DELETE is the LAST step. If the new `book_files` insert fails, the
    orphan new RS file is deleted and the replacement is rolled back.
    If the RS DELETE fails (5xx / network error), the new `book_files`
@@ -273,10 +275,42 @@ Hard rules — enforced by the Edge Function, NOT the browser:
    ReviewStudio DELETE contract is HTTP 204 with no body.
 
 The loader (`loadEmployeePage`) reads `book_files` with
-`is_latest IS DISTINCT FROM false`, so the most-recent successful
+`is_latest = true`, so the most-recent successful
 upload is the only one the employee sees — superseded rows are
 invisible to the UI but remain in the table for the reconciliation
 job's hard-delete pass.
+
+## Employee Reads and Reconciliation Writes
+
+`loadEmployeePage` fails closed unless the opaque token is unrevoked,
+unexpired, has exactly `role=employee`, is directly bound to the requested
+`book_id`, and carries the exact `load_employee_page` action. Bookshelf-wide
+actions and metadata-only book lists do not authorize this book-specific read.
+Unknown steps are rejected, and Content/Pricing reads additionally require the
+authoritative step row, progress state, or current employee step to show that
+the requested step is unlocked/current. Details remains the initial readable
+step for an otherwise valid book-specific token.
+
+ReviewStudio reconciliation during that read is a separate privileged write.
+It runs only when the same token also carries
+`upload_content_file_to_reviewstudio` and the authoritative book status is
+`draft` or `needs_updates`. A read-authorized but non-write-authorized request
+may load the page but cannot mutate `book_files`.
+
+The browser treats the loader's reconciled current file set as authoritative.
+Legacy saved `uploaded` booleans cannot satisfy Content file requirements after
+the corresponding current row is removed by reconciliation.
+
+Server upload validation enforces the existing product limits (1.5 GB
+manuscript, 50 MB cover) and the backend's current extension/MIME pairs. The
+browser's `File` metadata remains untrusted; this is intentionally lightweight
+validation rather than content-signature inspection.
+
+Draft serializers preserve unanswered AI-content, publishing-rights, and adult
+content choices as empty values. The repository does not contain the
+`saveEmployeeStep` server implementation, so its server-side completion and
+defaulting rules remain unverified and must be captured authoritatively before
+they are changed.
 
 ## Admin Review Writes
 
@@ -641,32 +675,18 @@ Re-run the security router and update this profile before introducing any new ca
 
 Do not let an architecture experiment silently become production architecture without this review.
 
-# 2026-09-02 Security Pack Alignment
+# Repository Security Pack Alignment
 
-The project security profile has been re-routed against the expanded security rule pack.
+The repository contains the security modules listed by `security/SECURITY_ROUTER.md`.
 
 This update does not change the existing KDP authentication or authorization architecture. The scoped opaque-token model, protected Supabase Edge Functions, server-authoritative workflow state, and existing frontend trust boundary remain authoritative.
 
 ## Additional Active Security Areas
 
-The following newer security areas are now explicitly applicable where the corresponding capability is exercised:
-
-- `SECURITY_DATABASE.md`
-  - Supabase/Postgres access, grants, authorization boundaries, privileged fields, backup/recovery, and destructive migration review.
-
-- Supabase rules in `SECURITY_PLATFORM_SPECIALIZED.md`
-  - Edge Function authorization, service-role containment, RLS/policy review, RPC privilege review, and cross-book/cross-user negative testing.
-
-- File/Object Storage rules in `SECURITY_PLATFORM_SPECIALIZED.md`
-  - manuscript/cover authorization, server-side type/size/path validation, signed URL handling, and private file access controls.
-
-- Webhook rules in `SECURITY_PLATFORM_SPECIALIZED.md`
-  - ReviewStudio webhook authenticity, payload validation, replay/duplicate protection, and idempotent privileged state changes.
-
-- `SECURITY_DEPLOYMENT.md`
-  - applies to any internet-facing staging or production host.
-  - Cloudflare Quick Tunnel remains development/staging-only and is not a production security boundary.
-  - production hosting must separately verify HTTPS/TLS, exposed services, debug surfaces, security headers where appropriate, logging, rollback, health checks, and environment separation.
+The previously listed `SECURITY_DATABASE.md`,
+`SECURITY_PLATFORM_SPECIALIZED.md`, and `SECURITY_DEPLOYMENT.md` paths do not
+exist in this repository or elsewhere under the current project workspace.
+They are not treated as active policy sources.
 
 - `SECURITY_DEPENDENCIES.md`
   - dependency identity, lockfile integrity, advisory review, build artifacts, unnecessary dependencies, and tool/plugin permissions.

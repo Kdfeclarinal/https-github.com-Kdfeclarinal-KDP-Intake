@@ -11,11 +11,8 @@
 //   1. resolve current persisted book_files row  ->  trusted review_id / review_file_id
 //   2. upload NEW file into the SAME Review        (POST /reviews/{review_id}/files)
 //   3. verify RS accepted the new file
-//   4. persist the NEW book_files mapping          (insert with is_latest=true)
-//   5. mark the OLD book_files row                 is_latest=false
-//      (atomic with step 4: the loader filter sees
-//       the new row as the only authoritative one
-//       even if the RS DELETE later fails)
+//   4. persist the NEW mapping as staged            (is_latest=false)
+//   5. atomically promote NEW + supersede OLD       (database RPC)
 //   6. DELETE the OLD ReviewStudio review file     (DELETE /reviews/{review_id}/files/{old_review_file_id})
 //   7. return the new authoritative file state
 //
@@ -38,6 +35,10 @@ export type ReviewStudioAuthHeaders = {
 
 export type SupabaseLike = {
   from: (table: string) => any;
+  rpc: (name: string, args: Record<string, unknown>) => Promise<{
+    data: unknown;
+    error: { message: string } | null;
+  }>;
   storage: {
     from: (bucket: string) => {
       upload: (
@@ -314,31 +315,25 @@ async function insertNewBookFile(
   return { id: String(data?.id || "") };
 }
 
-async function markOldBookFileSuperseded(
+async function promoteReplacementBookFile(
   supabase: SupabaseLike,
+  bookId: string,
+  fileType: string,
+  sectionKey: string,
   oldBookFileId: string,
   newBookFileId: string,
 ): Promise<void> {
-  // We mark the old row superseded BEFORE the RS DELETE so that even
-  // if the DELETE fails (Case C), the loader filter
-  //   is_latest = true
-  // already returns the new row as the only authoritative one.
-  //
-  // We also write the dedicated replacement-relationship column
-  // `replaced_by_file_id` (FK -> book_files.id, ON DELETE SET NULL).
-  // This is the DB-authoritative forward link from the superseded
-  // row to its replacement; the loader does not need it, but other
-  // server logic and reconciliation jobs do.
-  const { error } = await supabase
-    .from("book_files")
-    .update({
-      is_latest: false,
-      replaced_by_file_id: newBookFileId,
-    })
-    .eq("id", oldBookFileId);
-  if (error) {
+  const { data, error } = await supabase.rpc("promote_replacement_book_file", {
+    p_book_id: bookId,
+    p_file_type: fileType,
+    p_section_key: sectionKey,
+    p_old_file_id: oldBookFileId,
+    p_new_file_id: newBookFileId,
+  });
+  if (error || data !== true) {
     throw new Error(
-      `Could not supersede old book_files row: ${error.message || String(error)}`,
+      "Could not atomically promote replacement book_files row: " +
+        (error?.message || "the current file changed during replacement"),
     );
   }
 }
@@ -457,7 +452,8 @@ export async function replaceContentFile(input: ReplaceInput): Promise<ReplaceRe
     file_size: input.file.size,
     file_size_bytes: input.file.size,
     uploaded_at: nowIso,
-    is_latest: true,
+    // Staged until the transactional RPC atomically supersedes the old row.
+    is_latest: false,
     metadata: {
       review_kind: input.fileType,
       temp_storage_path: temp.path,
@@ -504,25 +500,20 @@ export async function replaceContentFile(input: ReplaceInput): Promise<ReplaceRe
     };
   }
 
-  // 5. Mark the OLD book_files row as superseded.
-  //    Sets is_latest=false AND replaced_by_file_id=new.id.
-  //
-  //    This step is now HARD-REQUIRED. The loader filter is an
-  //    explicit is_latest=true, so a failed supersede leaves the
-  //    loader returning BOTH rows (duplicate authoritative state).
-  //    Proceeding to step 6 in that state would DELETE the old
-  //    ReviewStudio file and return ok:true, leaving the user with
-  //    a successful-looking replacement plus an orphaned new RS
-  //    file plus a duplicated book_files row that no reconciliation
-  //    job can safely re-link.
+  // 5. Atomically supersede OLD and promote NEW. The migration-backed RPC
+  //    verifies the expected current tuple, so concurrent replacements cannot
+  //    both become authoritative. Failure leaves OLD current and NEW staged.
   //
   //    On failure we therefore:
   //      - skip step 6 (do NOT delete the old RS file)
   //      - return a structured failure with all ids needed for
   //        a future reconciliation job to repair the state.
   try {
-    await markOldBookFileSuperseded(
+    await promoteReplacementBookFile(
       input.supabase,
+      input.bookId,
+      input.fileType,
+      input.sectionKey,
       current.id,
       inserted.id,
     );

@@ -116,15 +116,16 @@ function hasReusableIds(input: ReconcileInputRow): boolean {
 
 type Classification = "present" | "missing" | "indeterminate";
 
-function classifyRsGetResponse(status: number, bodyText: string): Classification {
+function classifyRsGetResponse(status: number, bodyText: string, expectedId: string): Classification {
   if (status === 200) {
+    if (!bodyText) return "indeterminate";
     // RS sometimes returns 200 with an errors object for a deleted
     // resource; treat that as "missing" only if the body explicitly
     // indicates "not found" / "deleted".
     if (bodyText) {
       try {
         const data = JSON.parse(bodyText);
-        if (data && typeof data === "object") {
+        if (data && typeof data === "object" && !Array.isArray(data)) {
           const errs = (data as any).errors || (data as any).error;
           if (errs) {
             const txt = typeof errs === "string" ? errs : JSON.stringify(errs);
@@ -136,6 +137,13 @@ function classifyRsGetResponse(status: number, bodyText: string): Classification
             // avoid false-positive stale marking.
             return "indeterminate";
           }
+          const entity = (data as any).data && typeof (data as any).data === "object"
+            ? (data as any).data
+            : data;
+          const id = entity.id || entity.review_file?.id;
+          if (!id || String(id) !== String(expectedId)) return "indeterminate";
+        } else {
+          return "indeterminate";
         }
       } catch (_e) {
         // Malformed body — indeterminate.
@@ -207,7 +215,11 @@ async function verifyRow(
   } catch (_e) {
     // Body unreadable — use status alone.
   }
-  return classifyRsGetResponse(res.status, bodyText);
+  return classifyRsGetResponse(
+    res.status,
+    bodyText,
+    String(row.reviewstudio_file_id || ""),
+  );
 }
 
 async function markRowStale(

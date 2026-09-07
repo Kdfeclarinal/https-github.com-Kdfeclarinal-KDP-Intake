@@ -1,5 +1,9 @@
 import React from 'react';
 import { KdpProgress } from '../progress/KdpProgress.jsx';
+import {
+  authoritativeContentState,
+  serializeOptionalChoice,
+} from '../state/employeeState.js';
 
 // Employee Kindle eBook Content page.
 // Local-only form state. UI + interaction proof; no backend save contract is
@@ -42,12 +46,12 @@ const COVER_ACCEPT = ['.jpg', '.jpeg', '.tif', '.tiff'];
 const MANUSCRIPT_MAX_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB
 const COVER_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
-// Content completion is server-authoritative. The native required segments for a
-// Kindle eBook Content step (manuscript, DRM decision, cover, AI question,
-// accessibility choice) are enforced here so the Save and Continue call can be
-// blocked client-side with the exact platform copy. The server still re-checks
-// on completion. Preview is intentionally NOT required. ISBN/Publisher are
-// optional and must never block completion.
+// Content completion must be server-authoritative. The native required segments
+// (manuscript, DRM decision, cover, AI question, accessibility choice) are
+// mirrored here so Save and Continue can be blocked client-side with the exact
+// platform copy. This repository does not contain saveEmployeeStep source, so
+// this UI check is not evidence of server enforcement. Preview is intentionally
+// NOT required. ISBN/Publisher are optional and must never block completion.
 const REQUIRED_KEYS = ['manuscript', 'drm', 'cover', 'ai_content', 'accessibility'];
 const REQUIRED_MSG = {
   manuscript: 'Upload your manuscript.',
@@ -306,7 +310,7 @@ function buildContentSections(s) {
   return {
     manuscript: { sectionKey: 'manuscript', sectionLabel: 'Manuscript', required: false, reviewable: true, value: { uploaded: !!s.manuscriptHasFile, drm: s.drmChoice } },
     cover: { sectionKey: 'cover', sectionLabel: 'Kindle eBook Cover', required: false, reviewable: true, value: { option: s.coverOption, uploaded: !!s.coverHasFile } },
-    ai_content: { sectionKey: 'ai_content', sectionLabel: 'AI-Generated Content', required: false, reviewable: true, value: s.aiChoice || 'no' },
+    ai_content: { sectionKey: 'ai_content', sectionLabel: 'AI-Generated Content', required: false, reviewable: true, value: serializeOptionalChoice(s.aiChoice, ['yes', 'no']) },
     preview: { sectionKey: 'preview', sectionLabel: 'Kindle eBook Preview', required: false, reviewable: true, value: { hasPreview: !!s.hasPreview } },
     isbn: { sectionKey: 'isbn', sectionLabel: 'Kindle eBook ISBN', required: false, reviewable: true, value: { isbn: s.isbn, publisher: s.publisher } },
     accessibility: { sectionKey: 'accessibility', sectionLabel: 'Accessibility Features', required: false, reviewable: true, value: s.accessibleImages || '' },
@@ -513,13 +517,10 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
         if (ok === true && data && data.ok === true) {
           // T6: refresh the authoritative files[] from the protected read so
           // the View buttons + cover thumbnail light up from the same source
-          // of truth as a page reload, without the employee needing one. We
-          // also flip the local hasFile boolean as a transient signal so
-          // Save is unblocked immediately; the server refresh either confirms
-          // it (record present) or downgrades it (record missing) on the
-          // next render via `manuscriptHasFile = !!persistedX || state.x`.
+          // of truth as a page reload, without the employee needing one.
+          // Do not optimistically mark the file present: only the protected
+          // loader's reconciled file set can establish current-file state.
           setUploadState({ kind, busy: false, error: null });
-          setField(isManuscript ? 'manuscriptHasFile' : 'coverHasFile', true);
           return refreshAuthoritativeFiles();
         }
         setUploadState({ kind, busy: false, error: safeUploadError(data, status, kind) });
@@ -539,7 +540,11 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       setFeedback({ kind: 'error', msg: 'Missing book or access context. Reopen this page from your bookshelf link.' });
       return;
     }
-    const errs = saveType === 'complete' ? requiredErrors(state) : {};
+    // File presence comes only from the latest server-confirmed file set.
+    // Saved form booleans cannot complete Content after reconciliation has
+    // removed a stale manuscript or cover.
+    const stateForSave = authoritativeContentState(state, serverFiles);
+    const errs = saveType === 'complete' ? requiredErrors(stateForSave) : {};
     if (saveType === 'complete' && Object.keys(errs).length > 0) {
       setValidationErrors(errs); // block completion; Pricing stays locked
       setFeedback(null);
@@ -551,7 +556,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     setSaving(true);
     runSaveOverlay('Saving…');
     var progressState = buildProgressState(activeStep);
-    var stateJson = buildContentStateJson(state, saveType, activeStep, errs);
+    var stateJson = buildContentStateJson(stateForSave, saveType, activeStep, errs);
     fetch(SAVE_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -622,11 +627,10 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     ? persistedCover.preview_url
     : '';
 
-  // T6: derive the hasFile flags from the persisted records. Local boolean
-  // state remains a transient signal during upload, but on a fresh page
-  // load the persisted records satisfy manuscript/cover presence.
-  const manuscriptHasFile = !!persistedManuscript || state.manuscriptHasFile;
-  const coverHasFile = !!persistedCover || state.coverHasFile;
+  // File-presence UI and save validation share the same protected-loader
+  // snapshot. Saved booleans are legacy input only and never authoritative.
+  const manuscriptHasFile = !!persistedManuscript;
+  const coverHasFile = !!persistedCover;
 
   // --- Manuscript ---------------------------------------------------------
   // T7: the upload buttons reflect the same in-flight lock as the runtime

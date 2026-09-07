@@ -1,5 +1,12 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { reconcileBookFiles } from "../uploadContentFileToReviewStudio/_reconcile.ts";
+import {
+  authorizeEmployeePageRead,
+  canReconcileEmployeeFiles,
+  isEmployeeStepReadable,
+  normalizeEmployeeStepName,
+} from "./_authorization.ts";
+import { publicEmployeeFile } from "./_publicFile.ts";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -59,9 +66,14 @@ Deno.serve(async (request) => {
 
     const bookId = cleanString(payload.book_id);
     const accessToken = cleanString(payload.access_token);
-    const stepName = normalizeStepName(
-      payload.step_name || "content"
-    );
+    const stepName = normalizeEmployeeStepName(payload.step_name || "content");
+
+    if (!stepName) {
+      return jsonResponse(
+        { ok: false, error: "Invalid employee step." },
+        400
+      );
+    }
 
     if (!bookId) {
       return jsonResponse(
@@ -104,11 +116,11 @@ Deno.serve(async (request) => {
         .maybeSingle();
 
     if (tokenError) {
+      console.error("[loadEmployeePage] token lookup failed:", getErrorMessage(tokenError));
       return jsonResponse(
         {
           ok: false,
-          error: "Could not validate access token.",
-          details: getErrorMessage(tokenError)
+          error: "Could not validate access token."
         },
         500
       );
@@ -124,7 +136,7 @@ Deno.serve(async (request) => {
       );
     }
 
-    const tokenValidation = validateTokenForBook(
+    const tokenValidation = authorizeEmployeePageRead(
       tokenRow,
       bookId
     );
@@ -139,24 +151,6 @@ Deno.serve(async (request) => {
       );
     }
 
-    const allowed = tokenAllows(tokenRow, [
-      "load_employee_page",
-      "view_bookshelf",
-      "save_employee_step",
-      "complete_employee_step"
-    ]);
-
-    if (!allowed) {
-      return jsonResponse(
-        {
-          ok: false,
-          error:
-            "Access token does not allow employee page loading."
-        },
-        403
-      );
-    }
-
     const { data: bookRow, error: bookError } =
       await supabase
         .from("books")
@@ -165,11 +159,11 @@ Deno.serve(async (request) => {
         .maybeSingle();
 
     if (bookError) {
+      console.error("[loadEmployeePage] book lookup failed:", getErrorMessage(bookError));
       return jsonResponse(
         {
           ok: false,
-          error: "Could not load book.",
-          details: getErrorMessage(bookError)
+          error: "Could not load book."
         },
         500
       );
@@ -194,13 +188,20 @@ Deno.serve(async (request) => {
         .maybeSingle();
 
     if (stepError) {
+      console.error("[loadEmployeePage] step lookup failed:", getErrorMessage(stepError));
       return jsonResponse(
         {
           ok: false,
-          error: "Could not load step data.",
-          details: getErrorMessage(stepError)
+          error: "Could not load step data."
         },
         500
+      );
+    }
+
+    if (!isEmployeeStepReadable(stepName, bookRow, stepRow)) {
+      return jsonResponse(
+        { ok: false, error: "This employee step is not unlocked." },
+        403
       );
     }
 
@@ -220,11 +221,11 @@ Deno.serve(async (request) => {
         });
 
     if (filesError) {
+      console.error("[loadEmployeePage] file lookup failed:", getErrorMessage(filesError));
       return jsonResponse(
         {
           ok: false,
-          error: "Could not load book files.",
-          details: getErrorMessage(filesError)
+          error: "Could not load book files."
         },
         500
       );
@@ -257,7 +258,14 @@ Deno.serve(async (request) => {
         Deno.env.get("REVIEWSTUDIO_ADMIN_EMAIL") || "";
       const rsToken =
         Deno.env.get("REVIEWSTUDIO_API_KEY") || "";
-      if (rsBaseUrl && rsEmail && rsToken) {
+      // A protected read alone never grants mutation authority. Reconciliation
+      // may write only for the same book-specific token that can upload files,
+      // and only while the book remains employee-editable.
+      const reconciliationAuthorized = canReconcileEmployeeFiles(
+        tokenRow,
+        bookRow
+      );
+      if (reconciliationAuthorized && rsBaseUrl && rsEmail && rsToken) {
         const recon = await reconcileBookFiles({
           rows: rowsForReconcile,
           supabase,
@@ -277,7 +285,7 @@ Deno.serve(async (request) => {
               ")"
           );
         }
-      } else {
+      } else if (reconciliationAuthorized) {
         // Missing RS env vars: skip reconciliation. The page still
         // returns the rows as loaded, matching the previous behavior.
         console.warn(
@@ -315,17 +323,17 @@ Deno.serve(async (request) => {
         step_data: stepRow
           ? normalizeStepData(stepRow)
           : null,
-        files: normalizedFiles,
+        files: normalizedFiles.map(publicEmployeeFile),
         progress_state: bookRow.progress_state || null
       },
       200
     );
   } catch (error) {
+    console.error("[loadEmployeePage] unexpected failure:", getErrorMessage(error));
     return jsonResponse(
       {
         ok: false,
-        error: "Unexpected loadEmployeePage error.",
-        details: getErrorMessage(error)
+        error: "Unexpected loadEmployeePage error."
       },
       500
     );
@@ -393,16 +401,6 @@ function cleanString(value: unknown): string {
   return String(value || "").trim();
 }
 
-function normalizeStepName(value: unknown): string {
-  const step = cleanString(value).toLowerCase();
-
-  if (step === "details") return "details";
-  if (step === "content") return "content";
-  if (step === "pricing") return "pricing";
-
-  return "content";
-}
-
 async function sha256Hex(
   value: string
 ): Promise<string> {
@@ -418,103 +416,6 @@ async function sha256Hex(
       byte.toString(16).padStart(2, "0")
     )
     .join("");
-}
-
-function tokenAllows(
-  tokenRow: AnyObject,
-  actions: string[]
-): boolean {
-  const allowedActions = Array.isArray(
-    tokenRow.allowed_actions
-  )
-    ? tokenRow.allowed_actions.map(
-        (item: unknown) => cleanString(item)
-      )
-    : [];
-
-  return actions.some((action) =>
-    allowedActions.includes(action)
-  );
-}
-
-function validateTokenForBook(
-  tokenRow: AnyObject,
-  bookId: string
-): {
-  ok: boolean;
-  error?: string;
-} {
-  if (tokenRow.revoked_at) {
-    return {
-      ok: false,
-      error: "Access token has been revoked."
-    };
-  }
-
-  if (tokenRow.expires_at) {
-    const expiresAt = new Date(
-      tokenRow.expires_at
-    ).getTime();
-
-    if (
-      Number.isFinite(expiresAt) &&
-      expiresAt < Date.now()
-    ) {
-      return {
-        ok: false,
-        error: "Access token has expired."
-      };
-    }
-  }
-
-  if (
-    tokenRow.role &&
-    tokenRow.role !== "employee" &&
-    tokenRow.role !== "admin"
-  ) {
-    return {
-      ok: false,
-      error:
-        "Access token role is not allowed for employee page loading."
-    };
-  }
-
-  if (
-    tokenRow.book_id &&
-    String(tokenRow.book_id) !== String(bookId)
-  ) {
-    return {
-      ok: false,
-      error:
-        "Access token does not belong to this book."
-    };
-  }
-
-  const metadata = tokenRow.metadata || {};
-
-  const allowedBookIds = Array.isArray(
-    metadata.allowed_book_ids
-  )
-    ? metadata.allowed_book_ids.map(
-        (item: unknown) => String(item)
-      )
-    : [];
-
-  if (
-    !tokenRow.book_id &&
-    allowedBookIds.length &&
-    !allowedBookIds.includes(bookId)
-  ) {
-    return {
-      ok: false,
-      error:
-        "Access token does not allow this book."
-    };
-  }
-
-  return {
-    ok: true
-  };
 }
 
 function normalizeBook(

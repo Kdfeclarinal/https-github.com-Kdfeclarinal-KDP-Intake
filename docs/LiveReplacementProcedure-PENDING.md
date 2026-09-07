@@ -28,8 +28,9 @@ real Supabase `book_files` mutation — do NOT run without approval.
 1. resolve current `book_files` row (`is_latest=true`) for `(book_id, file_type,
    section_key)`
 2. POST new file into the **SAME** Review (`/reviews/{review_id}/files`)
-3. insert new `book_files` row `is_latest=true`
-4. mark old row `is_latest=false` + `replaced_by_file_id=new.id`
+3. insert new `book_files` row staged as `is_latest=false`
+4. atomically promote the new row and supersede the old row through
+   `promote_replacement_book_file`
 5. DELETE old RS file (`/reviews/{review_id}/files/{old_file_id}`, last step, no
    `delete_all_versions`, no auto-retry)
 
