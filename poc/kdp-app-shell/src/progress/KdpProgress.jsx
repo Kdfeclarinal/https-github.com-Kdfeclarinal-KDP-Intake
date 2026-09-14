@@ -15,6 +15,7 @@
 // ============================================================
 
 import { createElement as h } from 'react';
+import { progressVisual } from './progressVisual.js';
 
 function Svg(props, ...children) {
   const size = props && props.size != null ? props.size : 16;
@@ -50,6 +51,13 @@ function KdpLockIcon(props) {
   );
 }
 
+function KdpInfoIcon(props) {
+  return Svg(props,
+    h('circle', { cx: 8, cy: 8, r: 8, fill: '#007eb9' }),
+    h('path', { d: 'M8 7v5M8 4.25v.25', fill: 'none', stroke: '#fff', 'stroke-width': 1.7, 'stroke-linecap': 'round' })
+  );
+}
+
 function KdpProgress({ progress, onNavigate, currentStep }) {
   // progress: { details|content|pricing: { status, active } }.
   // status: 'complete' | 'in_progress' | 'locked' (or anything else → Not Started).
@@ -80,9 +88,8 @@ function KdpProgress({ progress, onNavigate, currentStep }) {
       const active = currentStep
         ? s.key === currentStep && unlocked
         : serverActive;
-      const nav = () => { if (unlocked && onNavigate) onNavigate(s.key); };
-      const text =
-        status === 'complete' ? 'Complete' : status === 'in_progress' ? 'In Progress...' : 'Not Started...';
+      const nav = () => { if (unlocked && s.key !== currentStep && onNavigate) onNavigate(s.key); };
+      const visual = progressVisual(status);
       return h(
         'div',
         {
@@ -100,13 +107,13 @@ function KdpProgress({ progress, onNavigate, currentStep }) {
         h(
           'div',
           { className: 'kdp-progress-status' },
-          status === 'complete' || status === 'in_progress' ? KdpCheckIcon() : KdpLockIcon(),
-          h('span', null, text)
+          visual.icon === 'check' ? KdpCheckIcon() : visual.icon === 'info' ? KdpInfoIcon() : KdpLockIcon(),
+          h('span', null, visual.text)
         )
       );
     })
   );
 }
 
-export { KdpProgress, KdpCheckIcon, KdpLockIcon };
+export { KdpProgress, KdpCheckIcon, KdpInfoIcon, KdpLockIcon };
 export default KdpProgress;

@@ -381,6 +381,71 @@ inspector_port = 8083
 # The Deno major version to use.
 deno_version = 2
 
+# Employee page functions authenticate the project's opaque, book-scoped token
+# in their request body. Supabase JWT verification must not run in front of that
+# application-level authorization check.
+[functions.loadEmployeePage]
+verify_jwt = false
+
+[functions.saveEmployeeStep]
+verify_jwt = false
+
+[functions.uploadContentFileToReviewStudio]
+verify_jwt = false
+
+[functions.loadPricingFxRates]
+verify_jwt = false
+
+# Supabase verifies the JWT at the gateway; the function also resolves the
+# current auth user and current application capability grants on every request.
+[functions.loadPrivilegedBookshelf]
+verify_jwt = true
+
+[functions.loadPrivilegedAdminReview]
+verify_jwt = true
+
+[functions.mutatePrivilegedAdminReview]
+verify_jwt = true
+
+[functions.initiateBasecampOAuth]
+verify_jwt = true
+
+# Basecamp redirects here without a Supabase session. The callback is authorized
+# by a hashed, short-lived, single-use server state instead of browser identity.
+[functions.basecampOAuthCallback]
+verify_jwt = false
+
+[functions.loadCreateBookOptions]
+verify_jwt = true
+
+[functions.createPrivilegedBook]
+verify_jwt = true
+
+[functions.retryBasecampProvisioning]
+verify_jwt = true
+
+[functions.disconnectBasecamp]
+verify_jwt = true
+
+# Employee submission uses the opaque book-scoped token in the request body.
+[functions.submitBookForApproval]
+verify_jwt = false
+
+[functions.respondEmployeeReview]
+verify_jwt = false
+
+[functions.resubmitBookForReview]
+verify_jwt = false
+
+[functions.saveReviewerBasecampMapping]
+verify_jwt = true
+
+[functions.retryBasecampReviewLifecycle]
+verify_jwt = true
+
+[functions.retryBasecampReviewOutcome]
+verify_jwt = true
+
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 

@@ -4,8 +4,8 @@
 // Flow: Client -> Project -> separate Review per file type -> Review File
 //
 // Employee editability rule:
-// - Uploads are allowed only while the book is "draft" or
-//   "needs_updates".
+// - Uploads are allowed only while the book is EMPLOYEE_INTAKE or
+//   EMPLOYEE_UPDATES (legacy deployed aliases: draft / needs_updates).
 // - Submitted, under-review, approved, archived, or deleted books
 //   are rejected before any integration event, temp upload,
 //   ReviewStudio request, or book_files write occurs.
@@ -25,9 +25,14 @@
 // ============================================================
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import {
+  isEmployeeEditableBookStatus,
+  isUnexpiredTokenExpiry,
+} from "../_shared/workflowStatus.mjs";
 import { replaceContentFile } from "./_replaceOrchestration.ts";
 import { verifyReviewStudioResources } from "./_verifyRsResources.ts";
 import { validateContentUpload } from "./_uploadValidation.ts";
+import { assertEmployeeUpdateFileSection } from "../_shared/adminReviewWorkflow.ts";
 import {
   publicFirstUploadResponse,
   publicReplacementResponse,
@@ -138,13 +143,6 @@ function normalizeName(value: unknown) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
-function normalizeStatus(value: unknown) {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-}
-
 function toApiId(value: unknown) {
   const text = String(value || "").trim();
   const numberValue = Number(text);
@@ -246,8 +244,8 @@ async function getToken(
   if (!data) throw new AppError(401, "Invalid access token.");
   if (data.revoked_at) throw new AppError(401, "Access token is revoked.");
 
-  if (data.expires_at && new Date(data.expires_at).getTime() <= Date.now()) {
-    throw new AppError(401, "Access token has expired.");
+  if (!isUnexpiredTokenExpiry(data.expires_at)) {
+    throw new AppError(401, "Access token has expired or is invalid.");
   }
 
   if (data.role !== "employee") {
@@ -286,6 +284,7 @@ async function getBook(supabase: any, bookId: string, token: any) {
         "employee_email",
         "employee_name",
         "overall_status",
+        "latest_review_round_id",
         "deleted_at",
       ].join(","),
     )
@@ -306,9 +305,7 @@ async function getBook(supabase: any, bookId: string, token: any) {
     throw new AppError(403, "Access token does not belong to this book.");
   }
 
-  const overallStatus = normalizeStatus(data.overall_status);
-
-  if (!["draft", "needs_updates"].includes(overallStatus)) {
+  if (!isEmployeeEditableBookStatus(data.overall_status)) {
     throw new AppError(
       409,
       "This book is not currently editable by an employee.",
@@ -735,6 +732,17 @@ Deno.serve(async function (request) {
      */
     const token = await getToken(supabase, accessToken, bookId);
     const book = await getBook(supabase, bookId, token);
+
+    if (["needs_updates", "EMPLOYEE_UPDATES"].includes(String(book.overall_status))) {
+      const { data: requestedFiles, error: requestedFilesError } = await supabase
+        .from("book_review_items")
+        .select("section_key")
+        .eq("review_round_id", book.latest_review_round_id)
+        .eq("step_name", "content")
+        .eq("decision", "needs_updates");
+      if (requestedFilesError) throw new Error(requestedFilesError.message);
+      assertEmployeeUpdateFileSection(book.overall_status, (requestedFiles || []).map((row) => String(row.section_key)), fileType);
+    }
 
     if (!(file instanceof File)) {
       throw new AppError(400, "Missing file.");

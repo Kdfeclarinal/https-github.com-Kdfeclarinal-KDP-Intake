@@ -3,7 +3,13 @@ import { createRoot } from 'react-dom/client';
 import './app.css';
 import { DetailsPage } from './details/DetailsPage.jsx';
 import { ContentPage } from './content/ContentPage.jsx';
+import { PricingPage } from './pricing/PricingPage.jsx';
 import { EmployeePageSkeleton } from './skeleton/EmployeePageSkeleton.jsx';
+import { BookshelfPage } from './bookshelf/BookshelfPage.jsx';
+import { CreateNewPage } from './bookshelf/CreateNewPage.jsx';
+import { PrivilegedGate } from './privileged/PrivilegedGate.jsx';
+import { AdminReviewGate } from './adminReview/AdminReviewGate.jsx';
+import { EmployeeUpdateContext, EmployeeUpdateNotice } from './employeeUpdates/EmployeeUpdateNotice.jsx';
 
 // Stage B1: ONE protected employee read via the existing loadEmployeePage Edge Function.
 // READ ONLY. No write, no storage, no new dependency.
@@ -25,6 +31,7 @@ function useProtectedEmployeeRead(step) {
   // missing or non-array `files` and default to an empty list so the page
   // never crashes on a payload that pre-dates this field.
   const [files, setFiles] = React.useState([]);
+  const [employeeUpdate, setEmployeeUpdate] = React.useState(null);
 
   // Re-run the protected read whenever the requested step changes (Details ->
   // Content navigation). book_id + access_token are read from the URL once.
@@ -40,6 +47,7 @@ function useProtectedEmployeeRead(step) {
     setSavedState(null);
     setProgressState(null);
     setFiles([]);
+    setEmployeeUpdate(null);
 
     if (!bookId || !accessToken) {
       setState('missing');
@@ -77,6 +85,7 @@ function useProtectedEmployeeRead(step) {
           // to an empty list when absent so the Content page never treats
           // an unknown field as a non-empty record.
           setFiles(Array.isArray(data.files) ? data.files : []);
+          setEmployeeUpdate(data.employee_update || null);
           setState('success');
         } else {
           setState('error');
@@ -87,7 +96,7 @@ function useProtectedEmployeeRead(step) {
     return () => { cancelled = true; };
   }, [step]);
 
-  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files };
+  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate };
 }
 
 function ProtectedReadGate() {
@@ -97,8 +106,16 @@ function ProtectedReadGate() {
   // authoritative on which step is unlocked for this access context.
   const initialStep = new URLSearchParams(window.location.search).get('step') || 'details';
   const [step, setStep] = React.useState(initialStep);
-  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files } =
+  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate } =
     useProtectedEmployeeRead(step);
+  React.useEffect(() => {
+    const syncStep = () => {
+      const requested = new URLSearchParams(window.location.search).get('step') || 'details';
+      if (['details', 'content', 'pricing'].includes(requested)) setStep(requested);
+    };
+    window.addEventListener('popstate', syncStep);
+    return () => window.removeEventListener('popstate', syncStep);
+  }, []);
 
   if (state === 'missing') {
     return React.createElement(
@@ -140,10 +157,14 @@ function ProtectedReadGate() {
 
   // success — hydrate the active step's form from the protected payload.
   const navigate = (nextStep) => {
-    if (nextStep !== step) setStep(nextStep);
+    if (nextStep === step || !['details', 'content', 'pricing'].includes(nextStep)) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('step', nextStep);
+    window.history.pushState({}, '', url);
+    setStep(nextStep);
   };
   if (step === 'content') {
-    return React.createElement(ContentPage, {
+    return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken }), React.createElement(ContentPage, {
       book,
       stepName,
       bookId,
@@ -155,9 +176,15 @@ function ProtectedReadGate() {
       // DetailsPage is intentionally unchanged.
       files,
       onNavigate: navigate,
-    });
+    }));
   }
-  return React.createElement(DetailsPage, {
+  if (step === 'pricing') {
+    return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken }), React.createElement(PricingPage, {
+      book, bookId, accessToken, savedState,
+      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate,
+    }));
+  }
+  return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken }), React.createElement(DetailsPage, {
     book,
     stepName,
     bookId,
@@ -165,10 +192,64 @@ function ProtectedReadGate() {
     savedState,
     initialProgress: progressState,
     onNavigate: navigate,
-  });
+  }));
 }
 
 function App() {
+  const initialView = new URLSearchParams(window.location.search).get('view');
+  const [view, setView] = React.useState(initialView);
+
+  React.useEffect(() => {
+    const syncRoute = () => setView(new URLSearchParams(window.location.search).get('view'));
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
+  }, []);
+
+  const navigateView = (nextView) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', nextView);
+    if (nextView !== 'admin-review') {
+      url.searchParams.delete('book_id');
+      url.searchParams.delete('review_step');
+    }
+    window.history.pushState({}, '', url);
+    setView(nextView);
+  };
+
+  const openAdminReview = (bookId) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'admin-review');
+    url.searchParams.set('book_id', bookId);
+    url.searchParams.set('review_step', 'details');
+    window.history.pushState({}, '', url);
+    setView('admin-review');
+  };
+
+  if (view === 'bookshelf' || view === 'create-new' || view === 'admin-review') {
+    return React.createElement(PrivilegedGate, null, (context, onSignOut, privilegedApi) => view === 'bookshelf'
+      ? React.createElement(BookshelfPage, {
+          books: context.books,
+          identity: context.identity,
+          canCreateBook: context.canCreateBook,
+          onSignOut,
+          onNavigate: navigateView,
+          onOpenReview: openAdminReview,
+          privilegedApi,
+        })
+      : view === 'create-new' ? React.createElement(CreateNewPage, {
+          onNavigate: navigateView,
+          canCreateBook: context.canCreateBook,
+          identity: context.identity,
+          onSignOut,
+          privilegedApi,
+          onCreated: async () => { await privilegedApi.refresh(); navigateView('bookshelf'); },
+        })
+      : React.createElement(AdminReviewGate, {
+          privilegedApi,
+          onBackToBookshelf: () => navigateView('bookshelf'),
+          onSignOut,
+        }));
+  }
   return React.createElement(ProtectedReadGate);
 }
 

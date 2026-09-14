@@ -6,6 +6,7 @@ import {
   isEmployeeStepReadable,
   normalizeEmployeeStepName,
 } from "./_authorization.ts";
+import { sanitizeEmployeeUpdateContext } from "../_shared/employeeUpdates.ts";
 import { publicEmployeeFile } from "./_publicFile.ts";
 
 const CORS_HEADERS = {
@@ -314,6 +315,20 @@ Deno.serve(async (request) => {
       previewBucket
     );
 
+    let employeeUpdate = null;
+    if (["needs_updates", "EMPLOYEE_UPDATES"].includes(String(bookRow.overall_status))) {
+      const { data: round } = await supabase.from("book_review_rounds")
+        .select("id,round_number,outcome,finalized_at").eq("id", bookRow.latest_review_round_id)
+        .eq("book_id", bookId).maybeSingle();
+      if (round?.finalized_at && round.outcome === "request_updates") {
+        const [{ data: updateItems }, { data: updateComments }] = await Promise.all([
+          supabase.from("book_review_items").select("id,step_name,section_key,decision").eq("review_round_id", round.id),
+          supabase.from("book_review_comments").select("id,review_item_id,parent_comment_id,body,comment_text,round_comment_number,actionable,created_at,deleted_at").eq("review_round_id", round.id).is("deleted_at", null),
+        ]);
+        employeeUpdate = sanitizeEmployeeUpdateContext({ roundNumber: round.round_number, step: stepName, items: updateItems || [], comments: updateComments || [] });
+      }
+    }
+
     return jsonResponse(
       {
         ok: true,
@@ -324,7 +339,8 @@ Deno.serve(async (request) => {
           ? normalizeStepData(stepRow)
           : null,
         files: normalizedFiles.map(publicEmployeeFile),
-        progress_state: bookRow.progress_state || null
+        progress_state: bookRow.progress_state || null,
+        employee_update: employeeUpdate
       },
       200
     );

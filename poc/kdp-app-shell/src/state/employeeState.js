@@ -16,6 +16,28 @@ export function serializeOptionalChoice(value, allowedValues) {
   return Array.isArray(allowedValues) && allowedValues.includes(value) ? value : '';
 }
 
+export function serializeContentExtractedFields(state) {
+  const content = state || {};
+  const drm = content.drmChoice === 'yes'
+    ? 'yes_apply_drm'
+    : content.drmChoice === 'no'
+      ? 'no_do_not_apply_drm'
+      : null;
+  const coverOption = content.coverOption === 'upload'
+    ? 'upload_cover_file'
+    : content.coverOption === 'cover_creator'
+      ? 'cover_creator'
+      : null;
+
+  return {
+    drm,
+    cover_option: coverOption,
+    accessibility: typeof content.accessibleImages === 'string' && content.accessibleImages
+      ? content.accessibleImages
+      : null,
+  };
+}
+
 export function serializePublishingRights(value) {
   if (value === 'copyright') return 'copyright_owner';
   if (value === 'public_domain') return 'public_domain';

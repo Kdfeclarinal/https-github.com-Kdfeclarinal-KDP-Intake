@@ -75,8 +75,9 @@ Supabase is the canonical backend source of truth for:
 - Important workflow events should be synchronized through a backend path, not by exposing private GHL credentials in the browser.
 
 **Basecamp**
-- Planned downstream/integration requirement before final deployment according to current project direction.
-- Exact integration design and implementation status are not yet verified in this repository context.
+- Supabase remains workflow authority; Basecamp is an asynchronous operational mirror only.
+- A local privileged Create Book slice now uses the configured Pre-Press project's active membership, commits the canonical Supabase book first, and then provisions one marked To-do List plus one Employee Intake task with reconcile-before-create retry behavior.
+- OAuth state, account/project/todoset verification, server-only API access, token refresh boundaries, disconnect state, and sanitized Bookshelf provisioning status are implemented locally. The approved local token-at-rest adapter uses service-role-only Supabase Vault wrappers; live activation requires applying its migration.
 
 ---
 
@@ -112,14 +113,16 @@ loadAdminReviewPage
 saveAdminReviewPage
 ```
 
-Tracked source is present for `loadEmployeePage` and the Content upload path.
-No tracked source, migration, deployment artifact, or Git history for
-`saveEmployeeStep` exists in this repository as of 2026-09-07; only its frontend
-HTTP contract and historical notes are present. Do not treat its server-side
-validation or workflow transition behavior as repository-verified until a
-read-only deployed-source/database capture is obtained.
+Tracked source is present for `loadEmployeePage`, `saveEmployeeStep`, and the
+Content upload path. The local `saveEmployeeStep` source is a recovered copy of
+deployed v14; it preserves unanswered draft values and validates completion on
+the server. Any later deployed revision must be captured again before local and
+runtime behavior are assumed identical.
 
-Other submission, ReviewStudio, finalization, or synchronization functions may exist and must be verified from the repository before use.
+The local `submit_kdp_book_for_approval` replacement remains service-role-only
+and is invoked only by an employee-authorizing Edge Function. It derives the
+submitted snapshot from persisted server state; the browser does not send a
+Pricing snapshot or call the RPC directly.
 
 ### Database RPC / Transactional Review Save
 
@@ -240,10 +243,10 @@ Known issue discovered during current work:
 - At least one submitted/reviewing book legitimately contains no DRM choice because the old workflow allowed it.
 - Do not invent or auto-fill a Yes/No answer for legacy submissions.
 
-The repository has no `saveEmployeeStep` implementation to verify the server-side
-DRM rule, other Content completion rules, or Pricing unlock transition. A
-read-only capture of the deployed function and relevant database/RPC contract is
-required before those claims can be promoted to repository-verified behavior.
+The recovered `saveEmployeeStep` v14 source verifies the server-side DRM rule,
+other Content completion rules, and Pricing unlock transition. React Content now
+serializes DRM, cover option, and accessibility using that deployed validation
+vocabulary while preserving unanswered draft values.
 
 Target rule going forward:
 
@@ -264,7 +267,9 @@ Verified hardening rules (2026-09-07):
   state.
 - Read-triggered ReviewStudio reconciliation may mutate `book_files` only when
   that token additionally carries `upload_content_file_to_reviewstudio` and the
-  authoritative book status is `draft` or `needs_updates`.
+  authoritative book state is employee-editable. Current deployed labels are
+  `draft` / `needs_updates`; the locked replacements are `EMPLOYEE_INTAKE` /
+  `EMPLOYEE_UPDATES`, and local employee functions accept both during cutover.
 - Content file presence is derived from the protected loader's reconciled current
   file set; stale saved upload booleans cannot complete Content.
 - Draft serialization preserves unanswered AI-content, publishing-rights, and
@@ -281,11 +286,165 @@ Verified hardening rules (2026-09-07):
 
 ## Employee Pricing
 
-Status: **IMPLEMENTED / NOT RECENTLY RE-PROVEN END-TO-END**
+Status: **IMPLEMENTED / FOCUSED LOCAL REGRESSION VERIFIED**
 
-Known page/workflow exists for pricing, royalty selection, marketplace/list price logic, and persistence.
+Known page/workflow exists for pricing, royalty selection, marketplace/list price logic, and persistence. The focused Pricing browser suite passed 43/43 on 2026-09-10; this is local mocked-backend evidence, not hosted end-to-end proof.
 
 Do not call it fully verified until the current repository/runtime is inspected and the complete employee flow is regression-tested.
+
+---
+
+## Locked Workflow Backend Foundation — 2026-09-10
+
+The canonical application-level book states are exactly:
+
+```text
+EMPLOYEE_INTAKE
+AWAITING_REVIEW
+IN_REVIEW
+EMPLOYEE_UPDATES
+KDP_INTAKE_APPROVED
+```
+
+The local, unapplied foundation migration evolves the existing schema rather
+than adding a second workflow column. It adds these enum values, privileged
+Supabase-auth identities with separately granted capabilities, default/per-book/
+per-round reviewer assignment references, explicit round submission snapshots,
+finalized-round immutability, comment replies, and idempotent Basecamp book-list
+provisioning state on the existing `basecamp_references` table.
+
+Existing `book_status_history`, employee assignment columns, review rounds/items/
+comments, section snapshots, `deleted_at`, Basecamp references, and integration
+events remain the durable foundation. Soft deletion preserves the logical
+workflow record and all dependent history; normal deletion must not hard-delete
+the book.
+
+The canonical status release is deliberately staged. Stage A is the additive
+foundation migration: it adds the canonical enum labels without rewriting
+existing rows, removing legacy labels, or requiring deployed writers to emit
+canonical labels. Existing Details, Content, Pricing, and admin review paths
+therefore continue accepting legacy labels such as `draft`, `for_approval`,
+`in_admin_review`, `needs_updates`, and `approved` during Stage A. Stage B is the
+later coordinated writer/data cutover; every legacy writer and reader must be
+updated before rows are normalized or legacy labels are made invalid. No
+foundation migration has been applied to the hosted database.
+
+The current-file hardening migration is ordered immediately before the Stage A
+foundation migration. Applying both requires a short controlled upload pause:
+the deployed upload function still inserts a new current row before superseding
+the old row, while the migration introduces the one-current-row constraint and
+promotion RPC. The safe release sequence is pause Content replacement uploads,
+apply the pending migrations, immediately deploy the local RPC-compatible upload
+function, verify replacement behavior, then resume uploads.
+
+### Privileged Bookshelf vertical slice — 2026-09-11
+
+The React `?view=bookshelf` and `?view=create-new` routes now have a local
+application-side Google/Supabase Auth gate and a server-authorized
+`loadPrivilegedBookshelf` read contract. The Edge Function validates the
+Supabase user, requires Google as the authentication provider, resolves an
+active `privileged_users` row and current non-revoked grants on every request,
+and scopes book queries before returning a minimal card projection.
+`can_view_all_books` sees all non-deleted books; `can_review` sees current
+direct or active-round assignments; `can_create_book` permits the shell but
+does not expose unassigned books. Employee opaque tokens cannot authenticate
+this path, and privileged cards do not route into employee intake.
+
+This is locally verified, not deployed. Live use requires the workflow
+foundation migration, the new Edge Function, Google enabled in Supabase Auth,
+an allowlisted callback URL, a browser-safe Supabase publishable key supplied
+as runtime configuration, and direct provisioning of privileged identities and
+grants. The local Basecamp slice now supplies the authoritative employee source
+for Create Book; delete/recover, archive, and Admin Review UI are not wired.
+
+### Basecamp + privileged Create Book slice — 2026-09-12
+
+The local Create New flow now obtains employees exclusively from the configured
+Pre-Press project's `GET /projects/{project_id}/people.json` membership and
+obtains reviewers from active KDP privileged users with a current `can_review`
+grant. Client IDs are selections only; the server revalidates membership,
+reviewer eligibility, Google/Supabase identity, and `can_create_book`.
+
+`create_privileged_kdp_book` transactionally creates the legacy-compatible
+`draft` book, three employee steps, hashed book-scoped employee token, initial
+history, pending Basecamp reference, and integration event. The raw token is
+never returned to the privileged browser. Basecamp provisioning begins only
+after that transaction commits, so a downstream failure leaves the canonical
+book visible with a retryable warning.
+
+Book provisioning uses a deterministic non-secret book marker, stores the
+To-do List and Employee Intake task IDs immediately, and reconciles remote
+collections before any repeated create POST. Known completed mappings do
+nothing; ambiguous failures are reconciled before retry, and a fresh employee
+credential is issued only when no existing task can be confirmed. Basecamp
+comments/webhooks remain deferred to later lifecycle work.
+
+### Secure submission foundation — 2026-09-12
+
+The local, unapplied secure-submission migration backs dynamic Basecamp OAuth
+credentials with Supabase Vault. Only service-role RPC wrappers may create,
+decrypt, rotate, or delete a token bundle; browser roles have no table or RPC
+access. Refresh-token rotation replaces the stored bundle, and permanent
+provider rejection marks the connection `refresh_required`.
+
+Reviewer authority remains in KDP privileged capabilities and assignments. A
+server-only mapping records a privileged reviewer ID to a stable Basecamp person
+ID only after current Pre-Press project membership is verified; email metadata
+never grants authority.
+
+Employee submission sends only the book ID and opaque book-scoped token. The
+transactional RPC reauthorizes the token, locks the book, validates persisted
+Details/Content/Pricing and required current files, creates one immutable
+submitted round and logical snapshot, resolves a valid per-book/default reviewer
+or leaves the review unassigned, and moves the book to `AWAITING_REVIEW`.
+Existing save/upload endpoints reject that non-editable state. Duplicate/retry
+submissions return the existing Round 1 instead of creating another active round.
+
+After the canonical transaction commits, Basecamp completes the existing
+Employee Intake task and creates a distinct `Admin Review — Round 1` task.
+Assignment requires a still-valid reviewer mapping and current project
+membership. Missing mapping, outage, or ambiguous response leaves retryable
+integration state and never rolls back Supabase workflow authority.
+
+### React workflow completion foundation — 2026-09-14
+
+Status: **IMPLEMENTED AND LOCALLY VERIFIED / NOT ACTIVATED**
+
+The React shell now connects the privileged Bookshelf/Create Book flow, the
+opaque-token employee Details → Content → Pricing → Submit flow, and the
+Google/Supabase-authorized Admin Review Details → Content → Pricing flow through
+the existing lightweight query routes. Employee `step` and privileged
+`review_step` transitions update deep links; IDs and query parameters remain
+selectors only and never grant access.
+
+Admin decisions and comment operations persist immediately through a
+capability-checked Edge Function and service-role-only transactional RPC. The
+active assigned reviewer may approve/reopen sections, create or manage comments,
+approve eligible pending sections on the current page, and durably reach later
+review pages only after prior required pages are decided. Finalized rounds and
+their submitted snapshots remain immutable and may be loaded as history.
+
+Whole-book Request Updates requires no pending review sections and at least one
+requested-change section. Approve Book requires every required section approved
+and no unresolved actionable issue. Both transitions commit Supabase first;
+Approve Book means KDP Intake approved, not published on Amazon. Request Updates
+reopens only requested employee sections, while direct save/upload calls reject
+changes to approved sections. Ready for re-review is derived from a normalized
+value change, a changed current file/version reference, or an employee reply.
+Resubmission creates a new immutable snapshot and sequential review round,
+inherits the same eligible reviewer, and carries an approval only when its value
+and relevant file references remain unchanged.
+
+Basecamp remains downstream. Finalization completes the current Admin Review
+task; Request Updates creates a distinct, employee-assigned `Employee Updates —
+Round N` task, and resubmission provisions a distinct `Admin Review — Round N+1`
+task. Reconciliation markers and unique reference keys prevent task reuse or
+duplication. Finalized-outcome failures are exposed as sanitized Bookshelf state
+with a separately authorized retry; they never roll back canonical KDP state.
+
+This remains Stage A. Legacy status aliases/readers/writers and all legacy GHL
+pages are retained until migrations/functions/configuration are activated and a
+real employee → reviewer → updates/resubmit → approval smoke test passes.
 
 ---
 
@@ -455,9 +614,9 @@ This is **not yet approval for a full rebuild**.
 
 ---
 
-# React + Vite GHL App-Shell POC
+# Historical React + Vite GHL App-Shell POC
 
-Status: **APPROVED IN PRINCIPLE / IMPLEMENTATION NOT YET AUTHORIZED**
+Status: **COMPLETED / SUPERSEDED BY THE LOCAL REACT WORKFLOW FOUNDATION**
 
 The next architecture experiment is a tiny React + Vite app-shell proof of concept on an isolated GHL staging funnel page.
 
@@ -522,9 +681,9 @@ It must not require restoring production GHL pages or production backend code.
 
 ---
 
-# Current Next Step
+# Historical POC Entry Checklist
 
-Before POC implementation:
+Before the original POC implementation, the required checklist was:
 
 1. establish repository control documents
    - `CLAUDE.md`
@@ -541,13 +700,16 @@ Do not install dependencies or build the POC until the reconnaissance report is 
 
 # Known Gaps / Risks
 
-- Admin Pricing and finalization are not complete/verified.
-- Admin Content still needs final UI hookup and end-to-end proof.
+- The React workflow completion foundation is locally verified but its migrations
+  and Edge Functions are not deployed; no hosted end-to-end outcome is claimed.
+- The new SQL migration has static/harness coverage but still requires an
+  execution dry-run against a schema-compatible PostgreSQL/Supabase environment.
 - DRM legacy submissions may be blank because old employee validation did not require a choice.
 - Final security bypass/release testing has not yet been completed.
 - Token values can appear in browser URLs; they must never be copied into logs/reports and any exposed development token must be rotated/reissued before release.
 - Current GHL frontend is maintainable but increasingly fragile due to selector/hydration coupling.
-- Basecamp integration remains a deployment prerequisite/direction but exact implementation status is not yet verified here.
+- Basecamp integration is implemented locally; live OAuth/Vault/project/person
+  configuration and a real lifecycle smoke test remain activation prerequisites.
 - GHL backend synchronization capabilities must be inspected before the POC attempts an outbound test event.
 
 ---

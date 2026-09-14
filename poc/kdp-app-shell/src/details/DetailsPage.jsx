@@ -1,6 +1,8 @@
 import React from 'react';
 import { KDP_CATEGORIES, KDP_CATEGORY_LEAVES, KDP_CATEGORY_MAX, KDP_CATEGORY_ROOT } from './kdpCategories.js';
 import { KdpProgress, KdpCheckIcon } from '../progress/KdpProgress.jsx';
+import { useDirtyNavigation } from '../navigation/DirtyNavigationGuard.jsx';
+import { useEmployeeUpdateSection } from '../employeeUpdates/EmployeeUpdateNotice.jsx';
 import {
   serializeOptionalChoice,
   serializePublishingRights,
@@ -432,9 +434,10 @@ function safeSaveError(data, status) {
 // --- small presentational helpers ---------------------------------------
 
 function Section({ label, children, error }) {
+  const update = useEmployeeUpdateSection(label);
   return h(
     'div',
-    { className: 'kdp-section' },
+    { className: `kdp-section${update.locked ? ' kdp-section--update-locked' : ''}${update.requested ? ' kdp-section--update-requested' : ''}`, inert: update.locked ? '' : undefined, 'aria-disabled': update.locked ? 'true' : undefined },
     h('div', { className: 'kdp-section-label' }, h('span', null, label)),
     h(
       'div',
@@ -1172,6 +1175,7 @@ function KdpDescriptionEditor({ value, onChange, maxLength }) {
 
 export function DetailsPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate }) {
   const [state, setState] = React.useState(() => initState(book, savedState));
+  const cleanStateRef = React.useRef(JSON.stringify(state));
   const [categoryAttempted, setCategoryAttempted] = React.useState(false);
   const [chooserOpen, setChooserOpen] = React.useState(false);
   const [seriesModalOpen, setSeriesModalOpen] = React.useState(false);
@@ -1237,17 +1241,17 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
     });
 
   // --- Save handlers (one request at a time; no write on load) ----------
-  const doSave = (saveType, nextStepName, activeStep) => {
-    if (savingRef.current) return; // request protection: one click = one request
+  const doSave = (saveType, nextStepName, activeStep, completion) => {
+    if (savingRef.current) { completion?.(false); return; } // request protection: one click = one request
     if (!bookId || !accessToken) {
       setFeedback({ kind: 'error', msg: 'Missing book or access context. Reopen this page from your bookshelf link.' });
-      return;
+      completion?.(false); return;
     }
     const errs = saveType === 'complete' ? requiredErrors(state) : {};
     if (saveType === 'complete' && Object.keys(errs).length > 0) {
       setValidationErrors(errs); // block completion; Content stays locked
       setFeedback(null); // top + bottom ValidationSummary render from validationErrors
-      return;
+      completion?.(false); return;
     }
     setValidationErrors({});
     setFeedback(null);
@@ -1282,6 +1286,7 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
         // saving phase is never visible to the user (or the test).
         window.setTimeout(() => {
           if (ok === true && data && data.ok === true) {
+            cleanStateRef.current = JSON.stringify(state);
             if (data.progress_state) setServerProgress(progressFromServer(data.progress_state));
             if (saveType === 'complete') {
               // Authoritative gate: only navigate to Content when
@@ -1319,13 +1324,15 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
                   (data.data_valid === false ? ' The form is not complete yet.' : ''),
               });
             }
+            completion?.(true);
           } else {
             setFeedback({ kind: 'error', msg: safeSaveError(data, status) });
             clearOverlay();
+            completion?.(false);
           }
         }, 50);
       })
-      .catch(() => { setFeedback({ kind: 'error', msg: 'Could not reach the server. No changes were saved.' }); clearOverlay(); })
+      .catch(() => { setFeedback({ kind: 'error', msg: 'Could not reach the server. No changes were saved.' }); clearOverlay(); completion?.(false); })
       .finally(() => {
         savingRef.current = false;
         setSaving(false);
@@ -1334,6 +1341,8 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
 
   const handleDraft = () => doSave('draft', null, 'details');
   const handleContinue = () => doSave('complete', 'content', 'content');
+  const saveDraftForNavigation = React.useCallback(() => new Promise((resolve) => doSave('draft', null, 'details', resolve)), [state, bookId, accessToken]);
+  const navigation = useDirtyNavigation({ currentStep: 'details', isDirty: JSON.stringify(state) !== cleanStateRef.current, saveDraft: saveDraftForNavigation, navigate: onNavigate });
 
   const fieldErr = (key) => validationErrors[key] || null;
   // No server progress yet → safe default (Details in progress, rest not started).
@@ -1819,11 +1828,11 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
       ),
       h(
         'div',
-        { className: 'kdp-preorder-extra' + (state.publishOption === 'preorder' ? ' is-open' : '') },
+        { className: 'kdp-expand kdp-preorder-extra' + (state.publishOption === 'preorder' ? ' is-open' : '') },
         h(
           'div',
-          { className: 'kdp-preorder-extra-inner' },
-          preorderBlock
+          { className: 'kdp-expand__inner kdp-preorder-extra-inner' },
+          h('div', { className: 'kdp-preorder-extra-content' }, preorderBlock)
         )
       )
     )
@@ -1892,7 +1901,7 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
     { className: 'kdp-app' },
     bookTitle ? h('h1', { className: 'kdp-book-title' }, bookTitle) : null,
     ValidationSummary({ errs: validationErrors }),
-    KdpProgress({ progress: displayProgress, onNavigate, currentStep: 'details' }),
+    KdpProgress({ progress: displayProgress, onNavigate: navigation.requestNavigation, currentStep: 'details' }),
     h('form', { className: 'kdp-form', onSubmit: (e) => e.preventDefault() },
       languageSection,
       titleSection,
@@ -1912,6 +1921,7 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
       feedbackNote
     ),
     seriesModalOpen ? h(SeriesModal, { onClose: () => setSeriesModalOpen(false) }) : null,
+    navigation.modal,
     overlayEl
   );
 }

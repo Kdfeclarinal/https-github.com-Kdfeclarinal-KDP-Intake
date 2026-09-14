@@ -1,7 +1,10 @@
 import React from 'react';
 import { KdpProgress } from '../progress/KdpProgress.jsx';
+import { useDirtyNavigation } from '../navigation/DirtyNavigationGuard.jsx';
+import { useEmployeeUpdateSection } from '../employeeUpdates/EmployeeUpdateNotice.jsx';
 import {
   authoritativeContentState,
+  serializeContentExtractedFields,
   serializeOptionalChoice,
 } from '../state/employeeState.js';
 
@@ -46,12 +49,12 @@ const COVER_ACCEPT = ['.jpg', '.jpeg', '.tif', '.tiff'];
 const MANUSCRIPT_MAX_BYTES = 1.5 * 1024 * 1024 * 1024; // 1.5 GB
 const COVER_MAX_BYTES = 50 * 1024 * 1024; // 50 MB
 
-// Content completion must be server-authoritative. The native required segments
+// Content completion must be server-authoritative. The current UI required segments
 // (manuscript, DRM decision, cover, AI question, accessibility choice) are
-// mirrored here so Save and Continue can be blocked client-side with the exact
-// platform copy. This repository does not contain saveEmployeeStep source, so
-// this UI check is not evidence of server enforcement. Preview is intentionally
-// NOT required. ISBN/Publisher are optional and must never block completion.
+// are mirrored here for client-side feedback. Deployed saveEmployeeStep v14 is
+// the authority for completion; its current omission of AI validation remains a
+// known policy mismatch. Preview is intentionally NOT required. ISBN/Publisher
+// are optional and must never block completion.
 const REQUIRED_KEYS = ['manuscript', 'drm', 'cover', 'ai_content', 'accessibility'];
 const REQUIRED_MSG = {
   manuscript: 'Upload your manuscript.',
@@ -93,9 +96,10 @@ function h(tag, props, ...children) {
 }
 
 function Section({ label, children, error }) {
+  const update = useEmployeeUpdateSection(label);
   return h(
     'div',
-    { className: 'kdp-section' },
+    { className: `kdp-section${update.locked ? ' kdp-section--update-locked' : ''}${update.requested ? ' kdp-section--update-requested' : ''}`, inert: update.locked ? '' : undefined, 'aria-disabled': update.locked ? 'true' : undefined },
     h('div', { className: 'kdp-section-label' }, h('span', null, label)),
     h('div', { className: 'kdp-section-content' }, children, error ? h(KdpErrorAlert, null, error) : null)
   );
@@ -296,7 +300,7 @@ function initContentState(book, saved) {
   return {
     manuscriptHasFile: !!v('manuscript', (sec) => sec.value && sec.value.uploaded),
     drmChoice: v('manuscript', (sec) => sec.value && sec.value.drm) || '',
-    coverOption: (cover.option) || 'cover_creator',
+    coverOption: cover.option || '',
     coverHasFile: !!(cover.uploaded),
     aiChoice: v('ai_content') || '',
     hasPreview: !!v('preview', (sec) => sec.value && sec.value.hasPreview),
@@ -322,6 +326,7 @@ function buildContentSections(s) {
 // progressState) but the content section keys are a POC placeholder pending a
 // live capture of the real content step_data — see the task report.
 function buildContentStateJson(s, saveType, activeStep, errs) {
+  const extractedFields = serializeContentExtractedFields(s);
   return {
     page: 'content',
     stepName: 'content',
@@ -329,7 +334,7 @@ function buildContentStateJson(s, saveType, activeStep, errs) {
     saveType: saveType,
     savedAt: new Date().toISOString(),
     sections: buildContentSections(s),
-    extractedFields: {},
+    extractedFields: extractedFields,
     progressState: buildProgressState(activeStep),
     validationRequiredKeys: REQUIRED_KEYS,
     validationErrors: errs || {},
@@ -416,6 +421,7 @@ function safeUploadError(data, status, kind) {
 
 export function ContentPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate, files }) {
   const [state, setState] = React.useState(() => initContentState(book, savedState));
+  const cleanStateRef = React.useRef(JSON.stringify(state));
   const [serverProgress, setServerProgress] = React.useState(() => progressFromServer(initialProgress));
   const [validationErrors, setValidationErrors] = React.useState({});
   const [feedback, setFeedback] = React.useState(null);
@@ -529,16 +535,16 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       .catch(() => setUploadState({ kind, busy: false, error: (kind === 'manuscript' ? 'The manuscript could not be uploaded. The file was not uploaded.' : 'The cover could not be uploaded. The file was not uploaded.') }));
   };
 
-  const doSave = (saveType, nextStepName, activeStep) => {
+  const doSave = (saveType, nextStepName, activeStep, completion) => {
     // T7: symmetric concurrency guard. A save must not start while a real
     // upload fetch is still in flight — both operations change server state
     // and overlapping them is unsafe. The upload side already blocks on
     // savingRef.current, so this is the missing reverse direction.
-    if (savingRef.current) return; // one click = one save
-    if (uploadState.busy) return; // do not interleave save + upload
+    if (savingRef.current) { completion?.(false); return; } // one click = one save
+    if (uploadState.busy) { completion?.(false); return; } // do not interleave save + upload
     if (!bookId || !accessToken) {
       setFeedback({ kind: 'error', msg: 'Missing book or access context. Reopen this page from your bookshelf link.' });
-      return;
+      completion?.(false); return;
     }
     // File presence comes only from the latest server-confirmed file set.
     // Saved form booleans cannot complete Content after reconciliation has
@@ -548,7 +554,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     if (saveType === 'complete' && Object.keys(errs).length > 0) {
       setValidationErrors(errs); // block completion; Pricing stays locked
       setFeedback(null);
-      return;
+      completion?.(false); return;
     }
     setValidationErrors({});
     setFeedback(null);
@@ -557,6 +563,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     runSaveOverlay('Saving…');
     var progressState = buildProgressState(activeStep);
     var stateJson = buildContentStateJson(stateForSave, saveType, activeStep, errs);
+    var extractedFields = serializeContentExtractedFields(stateForSave);
     fetch(SAVE_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -567,7 +574,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
         next_step_name: nextStepName,
         save_type: saveType,
         state_json: stateJson,
-        extracted_fields: {},
+        extracted_fields: extractedFields,
         validation_required_keys: REQUIRED_KEYS,
         validation_errors: errs,
         progress_state: progressState,
@@ -577,20 +584,33 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       .then((res) => res.json().catch(() => null).then((data) => ({ ok: res.ok, status: res.status, data })))
       .then(({ ok, status, data }) => {
         if (ok === true && data && data.ok === true) {
+          cleanStateRef.current = JSON.stringify(state);
           // Server-authoritative progress: hydrate from the backend, never client-guess.
           if (data.progress_state) setServerProgress(progressFromServer(data.progress_state));
-          showDone(saveType === 'complete' ? 'Content saved.' : 'Draft saved.');
           if (saveType === 'complete') {
-            setFeedback({ kind: 'ok', msg: 'Content is complete. Pricing is unlocked.' });
+            const ps = data.progress_state;
+            const contentComplete = !!(ps && ps.steps && ps.steps.content && ps.steps.content.isComplete === true);
+            const pricingUnlocked = !!(ps && ps.steps && ps.steps.pricing && ps.steps.pricing.isUnlocked === true);
+            if (contentComplete && pricingUnlocked && typeof onNavigate === 'function') {
+              showDone('Done!');
+              const reduce = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+              window.setTimeout(() => onNavigate(nextStepName), reduce ? 300 : 650);
+            } else {
+              clearOverlay();
+              setFeedback({ kind: 'ok', msg: 'Content was saved, but Pricing is not unlocked yet.' });
+            }
           } else {
+            showDone('Draft saved.');
             setFeedback({ kind: 'ok', msg: 'Draft saved.' + (data.data_valid === false ? ' The form is not complete yet.' : '') });
           }
+          completion?.(true);
         } else {
           clearOverlay();
           setFeedback({ kind: 'error', msg: safeSaveError(data, status) });
+          completion?.(false);
         }
       })
-      .catch(() => { clearOverlay(); setFeedback({ kind: 'error', msg: 'Could not reach the server. No changes were saved.' }); })
+      .catch(() => { clearOverlay(); setFeedback({ kind: 'error', msg: 'Could not reach the server. No changes were saved.' }); completion?.(false); })
       .finally(() => {
         savingRef.current = false;
         setSaving(false);
@@ -599,6 +619,8 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
 
   const handleDraft = () => doSave('draft', null, 'content');
   const handleContinue = () => doSave('complete', 'pricing', 'pricing');
+  const saveDraftForNavigation = React.useCallback(() => new Promise((resolve) => doSave('draft', null, 'content', resolve)), [state, serverFiles, bookId, accessToken, uploadState.busy]);
+  const navigation = useDirtyNavigation({ currentStep: 'content', isDirty: JSON.stringify(state) !== cleanStateRef.current, saveDraft: saveDraftForNavigation, navigate: onNavigate });
 
   const displayProgress = serverProgress || progressFromServer(null);
   const bookTitle = book && book.book_title ? book.book_title : '';
@@ -703,8 +725,8 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
 
   // --- Kindle eBook Cover --------------------------------------------------
   const coverExtraOpen = state.coverOption === 'upload';
-  const coverExtraClass = 'kdp-cover-extra' + (coverExtraOpen ? ' is-open' : '');
-  const coverExtraInnerClass = 'kdp-cover-extra-inner' + (coverExtraOpen ? ' is-open' : '');
+  const coverExtraClass = 'kdp-expand kdp-cover-extra' + (coverExtraOpen ? ' is-open' : '');
+  const coverExtraInnerClass = 'kdp-expand__inner kdp-cover-extra-inner';
   // T7: see msUpload* above. Cover upload uses the same split: the literal
   // "this upload is in flight" flag drives the label; the broader
   // non-interactive flag drives the disabled attribute + title.
@@ -741,6 +763,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
         ),
         h('div', { className: coverExtraClass },
           h('div', { className: coverExtraInnerClass },
+            h('div', { className: 'kdp-cover-extra-content' },
             // Cover thumbnail: use the verified top-level `preview_url`
             // from the persisted file record. Falls back to the existing
             // dashed placeholder if no usable URL is present yet. The
@@ -798,6 +821,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
               coverUploadInFlight
                 ? (coverHasFile ? 'Replacing…' : 'Uploading…')
                 : (coverHasFile ? 'Replace cover' : 'Upload cover')
+            )
             )
           )
         )
@@ -901,7 +925,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
   );
 
   // --- Bottom navigation -------------------------------------------------------
-  const handleBack = () => { if (onNavigate) onNavigate('details'); };
+  const handleBack = () => navigation.requestNavigation('details');
   // T7: a single derived flag drives BOTH the runtime guard inside doSave
   // and the disabled state of these buttons, so the UI cannot lie about
   // whether an operation is in flight. While either a save or an upload is
@@ -957,7 +981,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     { className: 'kdp-app kdp-app--content' },
     bookTitle ? h('h1', { className: 'kdp-book-title' }, bookTitle) : null,
     ValidationSummary({ errs: validationErrors }),
-    KdpProgressTiles({ progress: displayProgress, onNavigate }),
+    KdpProgressTiles({ progress: displayProgress, onNavigate: navigation.requestNavigation }),
     h('form', { className: 'kdp-form', onSubmit: (e) => e.preventDefault() },
       manuscriptSection,
       coverSection,
@@ -969,6 +993,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       ValidationSummary({ errs: validationErrors }),
       feedbackNote
     ),
+    navigation.modal,
     overlayEl
   );
 }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   authoritativeContentState,
+  serializeContentExtractedFields,
   serializeOptionalChoice,
   serializePublishingRights,
 } from '../src/state/employeeState.js';
@@ -57,4 +58,38 @@ test('publishing rights preserves unanswered and maps known answers only', () =>
   assert.equal(serializePublishingRights(''), '');
   assert.equal(serializePublishingRights('copyright'), 'copyright_owner');
   assert.equal(serializePublishingRights('public_domain'), 'public_domain');
+});
+
+test('Content draft extracted fields preserve unanswered choices as null', () => {
+  assert.deepEqual(serializeContentExtractedFields({
+    drmChoice: '',
+    coverOption: '',
+    accessibleImages: '',
+  }), {
+    drm: null,
+    cover_option: null,
+    accessibility: null,
+  });
+});
+
+test('complete Content extracted fields use the deployed validation vocabulary', () => {
+  assert.deepEqual(serializeContentExtractedFields({
+    drmChoice: 'yes',
+    coverOption: 'upload',
+    accessibleImages: 'all',
+  }), {
+    drm: 'yes_apply_drm',
+    cover_option: 'upload_cover_file',
+    accessibility: 'all',
+  });
+
+  assert.deepEqual(serializeContentExtractedFields({
+    drmChoice: 'no',
+    coverOption: 'cover_creator',
+    accessibleImages: 'dont_know',
+  }), {
+    drm: 'no_do_not_apply_drm',
+    cover_option: 'cover_creator',
+    accessibility: 'dont_know',
+  });
 });

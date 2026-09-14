@@ -1,6 +1,10 @@
 -- Local-only migration. Do not apply without reviewing live duplicate/null data.
 -- Standardizes current-file semantics on is_latest = true and makes replacement
 -- promotion transactional and concurrency-safe for the service-role Edge Function.
+-- Deployment gate: pause Content replacement uploads, apply this migration,
+-- immediately deploy the RPC-compatible upload function, verify replacement,
+-- and only then resume uploads. The legacy insert-current-first function is not
+-- compatible with the unique-current-file index created below.
 
 do $$
 begin

@@ -183,7 +183,24 @@ Expected checks before protected employee operations:
 - requested action is allowed
 - book state is employee-editable for write operations
 
-Current known editable statuses include `draft` and `needs_updates`; verify exact source before changing this rule.
+Employee writes are allowed only in employee-editable workflow states:
+`EMPLOYEE_INTAKE` / `EMPLOYEE_UPDATES` canonically and `draft` /
+`needs_updates` as their deployed aliases. Stage A only adds the canonical enum
+labels; it does not rewrite current rows, remove the deployed aliases, or require
+current writers to emit canonical values. Both pairs remain recognized during
+Stage A, and no review or approved state is employee-editable. Stage B is the
+later coordinated writer/data cutover; only that release may normalize rows or
+consider invalidating legacy labels.
+
+Google/Supabase authentication on the local privileged Bookshelf slice
+establishes identity only. Each privileged request independently validates the
+Supabase session, requires the Google provider, resolves an active
+`privileged_users` row by immutable Auth user ID, and reloads active capability
+grants. Authorization is a separate non-revoked grant stored by privileged-user
+ID. Email addresses, provider identity, Basecamp membership, request payloads,
+and frontend role flags are never capability proof. Privileged tables remain
+RLS protected and unavailable for direct browser reads or writes; the
+service-role key is confined to the authorizing Edge Function.
 
 ## Admin Review Token
 
@@ -280,6 +297,13 @@ upload is the only one the employee sees — superseded rows are
 invisible to the UI but remain in the table for the reconciliation
 job's hard-delete pass.
 
+Deployment of the one-current-row database invariant is coupled to the
+RPC-compatible upload function. The currently deployed legacy upload sequence
+must not receive replacement traffic after the unique-current-file index is
+created. Pause Content replacement uploads, apply the migration, immediately
+deploy the function that stages the new row with `is_latest=false` and invokes
+`promote_replacement_book_file`, verify the path, and only then resume uploads.
+
 ## Employee Reads and Reconciliation Writes
 
 `loadEmployeePage` fails closed unless the opaque token is unrevoked,
@@ -293,8 +317,9 @@ step for an otherwise valid book-specific token.
 
 ReviewStudio reconciliation during that read is a separate privileged write.
 It runs only when the same token also carries
-`upload_content_file_to_reviewstudio` and the authoritative book status is
-`draft` or `needs_updates`. A read-authorized but non-write-authorized request
+`upload_content_file_to_reviewstudio` and the authoritative book state is
+employee-editable (`draft` / `needs_updates` during cutover;
+`EMPLOYEE_INTAKE` / `EMPLOYEE_UPDATES` canonically). A read-authorized but non-write-authorized request
 may load the page but cannot mutate `book_files`.
 
 The browser treats the loader's reconciled current file set as authoritative.
@@ -307,25 +332,27 @@ browser's `File` metadata remains untrusted; this is intentionally lightweight
 validation rather than content-signature inspection.
 
 Draft serializers preserve unanswered AI-content, publishing-rights, and adult
-content choices as empty values. The repository does not contain the
-`saveEmployeeStep` server implementation, so its server-side completion and
-defaulting rules remain unverified and must be captured authoritatively before
-they are changed.
+content choices as empty values. Recovered `saveEmployeeStep` v14 performs
+server-side completion validation; browser-supplied progress/completion remains
+non-authoritative.
 
 ## Admin Review Writes
 
-Every admin decision save must re-check:
+The local workflow-completion implementation re-checks on every mutation:
 
-- admin token scope
+- current Google/Supabase identity and active privileged-user record
+- current non-revoked `can_review` capability
 - book/review-round ownership
 - active review state
-- page/step permission
-- expected reviewable item set
-- no unknown or duplicate section keys
-- no pending/inconsistent decisions when page save requires all items decided
+- assigned-reviewer ownership for mutable review work
+- page prerequisites or a previously reached page
+- item/thread membership in the exact book and round
 - comment limits / input constraints
 
-The existing transactional review-save design should remain authoritative where already implemented.
+Reviewer success is reflected only after the RPC succeeds and the sanitized
+authoritative round is reloaded. Round-local actionable issue numbers are
+allocated under a transaction advisory lock. Query parameters, item IDs,
+Basecamp person IDs, and browser state provide no authority.
 
 ## Finalization
 
@@ -347,6 +374,25 @@ Any pending / inconsistent / missing item
 ```
 
 Frontend button visibility is only UX, never authorization.
+
+The finalization RPC independently requires `can_finalize_book`, locks the book
+and active round, revalidates every required decision, records status/audit
+history, and finalizes once. An assigned reviewer may finalize only with that
+capability; an owner-level override additionally requires the existing
+reassignment/manage authority. Finalized review content is immutable except for
+the narrowly authorized append-only employee reply during Request Updates.
+
+Employee update writes repeat the book-scoped opaque-token authorization and
+permit only reviewer-requested section keys or exact requested file sections.
+Ready for re-review is calculated from normalized persisted values, authoritative
+current file/version references, or an employee reply; the browser cannot assert
+it. Resubmission locks the book, creates one new active round/snapshot, and uses
+the database uniqueness constraint to reject duplicate active rounds.
+
+Basecamp outcome synchronization happens after canonical commit. Failures update
+sanitized retry state and may be retried only by a current privileged identity
+with finalization or reviewer-assignment authority. A missing employee Basecamp
+mapping fails safely and never creates an unassigned Employee Updates task.
 
 ---
 
@@ -412,6 +458,8 @@ The following are server-only secrets:
 | Supabase service-role / secret key | Edge Function/server environment only |
 | GHL private integration token | Edge Function/server environment only |
 | GHL OAuth client secret, if introduced | server environment only |
+| Basecamp OAuth client secret | Edge Function/server environment only |
+| Basecamp OAuth access/refresh tokens | approved managed token vault only |
 | ReviewStudio API key/token | Edge Function/server environment only |
 | ReviewStudio webhook secret/signing key | server environment only |
 | database credentials | server/managed environment only |
@@ -531,6 +579,41 @@ Use appropriate combinations of:
 
 Do not add complex idempotency infrastructure to trivial draft saves unless repository evidence shows it is needed.
 
+Finalized review rounds, their review items, and their comments/replies are
+immutable history. Reviewer assignment is stored by privileged-user ID on the
+book and round; claim/reassignment requires the corresponding server-verified
+capability and must append an audit event. The database permits at most one
+submitted/in-review round per book.
+
+Basecamp remains an asynchronous operational mirror. Book-level To-do List
+provisioning uses a unique idempotency key and explicit pending/provisioned/
+failed state; `provisioned` requires a real returned external ID. Basecamp state
+must never authorize or drive a KDP workflow transition.
+
+Basecamp OAuth is an integration connection, never a KDP login. Initiation
+requires a current Google/Supabase privileged identity with
+`can_manage_integrations`; the callback relies on a hashed, short-lived,
+single-use server state because the intentional in-memory privileged session
+does not survive a full-page redirect. Account and Pre-Press project IDs come
+from server configuration, the project must be accessible, and its enabled
+To-dos tool/todoset is discovered from the project dock.
+
+Dynamic Basecamp access and refresh tokens are not stored in
+`basecamp_connections` or another general-purpose table. The local integration
+uses server-only `read_basecamp_token_bundle`, `store_basecamp_token_bundle`,
+and `delete_basecamp_token_bundle` wrappers backed by Supabase Vault. The client
+secret and token material never enter React, GHL configuration, browser storage,
+API responses, application logs, or generated bundles.
+
+Create Book requires current `can_create_book`, a currently returned member of
+the configured Pre-Press project, and a current eligible KDP reviewer. Supabase
+commits the canonical book/token/steps/history and pending mapping
+transactionally before any Basecamp create request. Basecamp create POSTs are
+not automatically retried. Retry first reconciles the deterministic non-secret
+book marker and stored IDs; it reissues a book-scoped employee credential only
+when no Employee Intake task can be confirmed. Basecamp membership grants no
+KDP reviewer/admin authority, and Basecamp task state cannot transition KDP.
+
 ---
 
 # Audit / Status History
@@ -553,6 +636,12 @@ Audit entries should record sufficient actor/action/time/source context without 
 
 Do not silently rewrite history to hide failed/previous transitions.
 
+The local `submit_kdp_book_for_approval` RPC is executable only by
+`service_role`, but service-role restriction alone is not employee
+authorization. The employee Edge Function validates the book-scoped token, and
+the transaction independently repeats that authorization by token hash before
+creating or returning the submitted round.
+
 ---
 
 # Logging Rules
@@ -562,6 +651,7 @@ Logs may include safe identifiers needed for debugging, but must not include:
 - raw access tokens
 - service-role key
 - GHL private token
+- Basecamp client secret, access token, or refresh token
 - ReviewStudio API key
 - webhook secrets
 - private credentials
@@ -692,6 +782,15 @@ They are not treated as active policy sources.
   - dependency identity, lockfile integrity, advisory review, build artifacts, unnecessary dependencies, and tool/plugin permissions.
 
 ## Additional Implementation Requirements
+
+Basecamp OAuth credentials are held only in Supabase Vault through service-role
+`SECURITY DEFINER` wrappers. The stored credential reference is not itself a
+credential, and anon/authenticated roles have no access to the wrappers or the
+reviewer/Basecamp mapping table. Employee submission is authorized at the Edge
+boundary and again transactionally by token hash in the database, using
+persisted server state instead of a browser-supplied Pricing snapshot. Basecamp
+lifecycle failure is operational only and cannot undo or authorize the canonical
+KDP transition.
 
 For security-sensitive API requests:
 
