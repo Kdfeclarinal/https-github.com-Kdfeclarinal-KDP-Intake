@@ -17,10 +17,11 @@ function deps(overrides = {}) {
     findPrivilegedUser: async () => ({ id: 'reviewer-1', display_name: 'Rae', disabled_at: null }),
     listGrants: async () => [{ capability_key: 'can_review', revoked_at: null }],
     findBook: async () => ({ id: 'book-1', book_title: 'A Book', primary_author_name: 'A. Writer', overall_status: 'AWAITING_REVIEW', latest_review_round_id: 'round-1', assigned_reviewer_user_id: 'reviewer-1', deleted_at: null }),
-    findRound: async () => ({ id: 'round-1', book_id: 'book-1', round_number: 1, status: 'submitted', reviewer_user_id: 'reviewer-1', submission_snapshot: { files: [{ file_name: 'manuscript.docx', reviewstudio_file_id: 'private-id' }] } }),
+    findRound: async () => ({ id: 'round-1', book_id: 'book-1', round_number: 1, status: 'submitted', reviewer_user_id: 'reviewer-1', revision: 7, submission_snapshot: { files: [{ file_name: 'manuscript.docx', reviewstudio_file_id: 'private-id' }] } }),
     listItems: async () => [{ id: 'item-1', step_name: 'details', section_key: 'details.language', section_label: 'Language', sort_order: 1, is_reviewable: true, section_snapshot: { submitted_step: { sections: { 'details.language': { value: 'English' }, 'details.private_duplicate': { value: 'do not duplicate' } } } }, status: 'pending' }],
     listComments: async () => [{ id: 'comment-1', review_item_id: 'item-1', comment_text: 'Check this', admin_name: 'Rae', created_at: '2026-09-14T00:00:00Z' }],
     listRounds: async () => [{ id: 'round-1', round_number: 1, status: 'submitted', finalized_at: null, outcome: null }],
+    listContinuations: async () => [],
     ...overrides,
   };
 }
@@ -34,6 +35,7 @@ test('assigned Google reviewer receives minimized frozen review data', async () 
   assert.deepEqual(result.body.files, [{ fileName: 'manuscript.docx' }]);
   assert.equal(JSON.stringify(result.body).includes('reviewstudio_file_id'), false);
   assert.equal(JSON.stringify(result.body).includes('private_duplicate'), false);
+  assert.equal(result.body.reviewRound.revision, 7);
 });
 
 test('assigned reviewer can load an immutable previous round by explicit id', async () => {
@@ -79,4 +81,34 @@ test('latest finalized round remains available as immutable history', async () =
   assert.equal(result.status, 200);
   assert.equal(result.body.permissions.canMutate, false);
   assert.equal(result.body.reviewRound.outcome, 'request_updates');
+});
+
+test('next active round exposes minimized linked continuation context', async () => {
+  const result = await resolvePrivilegedAdminReview(deps({
+    listContinuations: async () => [{
+      id: 'thread-1', target_comment_id: 'comment-1', target_item_id: 'item-1', source_round_number: 1,
+      request_body_snapshot: 'Please fix the title.', request_number_snapshot: 2,
+      reviewer_name_snapshot: 'Prior reviewer', requested_at: '2026-09-14T00:00:00Z',
+      ready_via_reply: true, ready_via_change: false, ready_via_file_change: false,
+      ready_at: '2026-09-14T01:00:00Z', readiness_evidence: { changed: false },
+      replies: [{ id: 'reply-1', body: 'Fixed.', author_name_snapshot: 'Employee', created_at: '2026-09-14T00:30:00Z', author_employee_token_id: 'private-token' }],
+    }],
+  }), 'book-1');
+  assert.equal(result.status, 200);
+  assert.equal(result.body.comments[0].continuation.originalRequest, 'Please fix the title.');
+  assert.equal(result.body.comments[0].continuation.employeeReplies[0].body, 'Fixed.');
+  assert.equal(JSON.stringify(result.body).includes('private-token'), false);
+});
+
+test('historical response preserves finalized attribution and safe file version identity', async () => {
+  const result = await resolvePrivilegedAdminReview(deps({
+    findRound: async () => ({
+      id: 'round-1', book_id: 'book-1', round_number: 1, status: 'in_review', reviewer_user_id: 'reviewer-1',
+      finalized_at: '2026-09-14T00:00:00Z', finalized_by_name: 'Rae Reviewer', reviewer_name_snapshot: 'Rae Reviewer',
+      outcome: 'request_updates', submission_snapshot: { files: [{ file_name: 'manuscript.docx', file_type: 'manuscript', version_number: 3, reviewstudio_file_id: 'private-id' }] },
+    }),
+  }), 'book-1');
+  assert.equal(result.body.reviewRound.finalizedBy, 'Rae Reviewer');
+  assert.equal(result.body.reviewRound.reviewer, 'Rae Reviewer');
+  assert.deepEqual(result.body.files, [{ fileName: 'manuscript.docx', fileType: 'manuscript', versionNumber: 3 }]);
 });

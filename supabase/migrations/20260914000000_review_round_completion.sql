@@ -179,8 +179,21 @@ begin
     if exists (select 1 from public.book_review_comments c where c.review_item_id = v_item.id and c.actionable and c.parent_comment_id is null and c.resolved_at is null and c.deleted_at is null) then raise exception 'Resolve actionable threads before approving.'; end if;
     update public.book_review_items set decision = 'approved', decision_at = now(), decision_by_user_id = p_actor_user_id, decision_source = 'explicit' where id = v_item.id;
   elsif p_action = 'reopen' then
+    if v_item.decision <> 'approved' then
+      raise exception 'Only an approved section may be reopened.';
+    end if;
+
     v_previous := v_item.decision;
-    update public.book_review_items set decision = 'pending', decision_at = now(), decision_by_user_id = p_actor_user_id, decision_source = 'reopened', reopened_at = now(), reopened_by_user_id = p_actor_user_id where id = v_item.id;
+
+    update public.book_review_items
+    set
+      decision = 'pending',
+      decision_at = now(),
+      decision_by_user_id = p_actor_user_id,
+      decision_source = 'reopened',
+      reopened_at = now(),
+      reopened_by_user_id = p_actor_user_id
+    where id = v_item.id;
   elsif p_action in ('comment', 'reply') then
     v_body := nullif(btrim(p_payload->>'body'), '');
     if v_body is null or length(v_body) > 2000 then raise exception 'Comment body is invalid.'; end if;

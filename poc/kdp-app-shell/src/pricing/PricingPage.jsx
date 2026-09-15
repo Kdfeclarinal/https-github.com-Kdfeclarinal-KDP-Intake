@@ -39,7 +39,7 @@ function dirtySnapshot(state) {
   return JSON.stringify({ kdpSelect: state.kdpSelect, territoryMode: state.territoryMode, selectedTerritories: state.selectedTerritories, royaltyPlan: state.royaltyPlan, primaryListPrice: state.primaryListPrice, marketplaces: state.marketplaces.map(({ id, listPrice, manualOverride }) => ({ id, listPrice, manualOverride })) });
 }
 
-export function PricingPage({ book, bookId, accessToken, savedState, initialProgress, onNavigate, files, employeeUpdate }) {
+export function PricingPage({ book, bookId, accessToken, savedState, initialProgress, onNavigate, files, employeeUpdate, employeeRevision, onConcurrencyConflict }) {
   const [state, setState] = React.useState(() => hydratePricingState(savedState, book));
   const baselineRef = React.useRef(dirtySnapshot(state));
   const [progress, setProgress] = React.useState(() => progressFromServer(initialProgress));
@@ -49,6 +49,7 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
   const [submitted, setSubmitted] = React.useState(false);
   const [overlay, setOverlay] = React.useState(null);
   const [fxStatus, setFxStatus] = React.useState('loading');
+  const [revision, setRevision] = React.useState(Number(employeeRevision) || 0);
   const savingRef = React.useRef(false);
   const submittingRef = React.useRef(false);
   const primaryMarket = MARKETPLACES.find((row) => row.id === state.primaryMarketplace) || MARKETPLACES[0];
@@ -74,9 +75,15 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
     const sections = serializePricingState(state);
     const stateJson = { page: 'pricing', stepName: 'pricing', stepLabel: 'Kindle eBook Pricing', saveType, savedAt: new Date().toISOString(), sections, extractedFields: {}, progressState: initialProgress || null, validationRequiredKeys: REQUIRED_KEYS, validationErrors: {} };
     try {
-      const response = await fetch(SAVE_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId, access_token: accessToken, step_name: 'pricing', next_step_name: null, save_type: saveType, state_json: stateJson, extracted_fields: {}, validation_required_keys: REQUIRED_KEYS, validation_errors: {}, progress_state: initialProgress || null, source: 'ghl_kdp_pricing_page' }) });
+      const response = await fetch(SAVE_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ book_id: bookId, access_token: accessToken, expected_revision: revision, step_name: 'pricing', next_step_name: null, save_type: saveType, state_json: stateJson, extracted_fields: {}, validation_required_keys: REQUIRED_KEYS, validation_errors: {}, progress_state: initialProgress || null, source: 'ghl_kdp_pricing_page' }) });
       const data = await response.json().catch(() => null);
+      if (response.status === 409) {
+        setFeedback({ kind: 'error', text: 'This book changed elsewhere. The latest version is being loaded.' });
+        onConcurrencyConflict?.();
+        return false;
+      }
       if (!response.ok || !data || data.ok !== true) throw new Error('save_failed');
+      setRevision(Number(data.employee_revision));
       if (saveType === 'complete' && data.data_valid !== true) throw new Error('validation_failed');
       if (data.progress_state) setProgress(progressFromServer(data.progress_state));
       baselineRef.current = dirtySnapshot(state);
@@ -84,7 +91,7 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
         setOverlay('done'); setFeedback({ kind: 'ok', text: 'Draft saved.' });
         window.setTimeout(() => setOverlay(null), window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 300 : 650);
       }
-      return true;
+      return Number(data.employee_revision);
     } catch {
       setOverlay(null); setFeedback({ kind: 'error', text: saveType === 'complete' ? 'Complete all required Pricing fields before submitting.' : 'The pricing information could not be saved. Please try again.' }); return false;
     } finally { savingRef.current = false; setSaving(false); }
@@ -95,10 +102,12 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
     if (submitted || submittingRef.current || savingRef.current) return;
     submittingRef.current = true; setSubmitting(true); setFeedback(null);
     try {
-      if (!(await savePricing('complete'))) return;
+      const savedRevision = await savePricing('complete');
+      if (savedRevision === false) return;
       setOverlay('submitting');
-      const response = await fetch(employeeUpdate ? RESUBMIT_ENDPOINT : SUBMIT_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(employeeUpdate ? { bookId, accessToken } : { book_id: bookId, access_token: accessToken }) });
+      const response = await fetch(employeeUpdate ? RESUBMIT_ENDPOINT : SUBMIT_ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(employeeUpdate ? { bookId, accessToken, updateCycleId: employeeUpdate.updateCycleId, expectedRevision: savedRevision } : { book_id: bookId, access_token: accessToken, expected_revision: savedRevision }) });
       const data = await response.json().catch(() => null);
+      if (response.status === 409) { setOverlay(null); setFeedback({ kind: 'error', text: 'This book changed elsewhere. The latest version is being loaded.' }); onConcurrencyConflict?.(); return; }
       if (!response.ok || !data || data.ok !== true) throw new Error('submit_failed');
       setSubmitted(true); setOverlay('done'); setFeedback({ kind: 'ok', text: employeeUpdate ? 'Updates submitted for re-review.' : 'Submitted for approval.' });
       window.setTimeout(() => setOverlay(null), window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 300 : 650);

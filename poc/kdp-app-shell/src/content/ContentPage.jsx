@@ -419,7 +419,7 @@ function safeUploadError(data, status, kind) {
 
 // --- page component --------------------------------------------------------
 
-export function ContentPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate, files }) {
+export function ContentPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate, files, employeeRevision, onConcurrencyConflict }) {
   const [state, setState] = React.useState(() => initContentState(book, savedState));
   const cleanStateRef = React.useRef(JSON.stringify(state));
   const [serverProgress, setServerProgress] = React.useState(() => progressFromServer(initialProgress));
@@ -434,6 +434,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
   // post-upload refresh updates this so the View buttons + thumbnail
   // appear without requiring a manual page reload.
   const [serverFiles, setServerFiles] = React.useState(Array.isArray(files) ? files : []);
+  const [revision, setRevision] = React.useState(Number(employeeRevision) || 0);
 
   // T6: if the parent re-supplies `files` (e.g. after a navigation back from
   // Details, or a future top-level refresh), keep `serverFiles` in sync.
@@ -460,6 +461,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       .then(({ ok, data }) => {
         if (ok && data && data.ok === true) {
           setServerFiles(Array.isArray(data.files) ? data.files : []);
+          setRevision(Number(data.employee_revision) || 0);
         }
         return null;
       })
@@ -512,6 +514,9 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     const form = new FormData();
     form.append('book_id', bookId);
     form.append('access_token', accessToken); // runtime URL value only; never persisted/logged
+    form.append('expected_revision', String(revision));
+    const observedCurrent = selectFile(serverFiles, kind, `content.${kind}`);
+    form.append('observed_current_file_id', observedCurrent?.id ? String(observedCurrent.id) : 'none');
     form.append('section_key', isManuscript ? 'content.manuscript' : 'content.cover');
     form.append('file_type', isManuscript ? 'manuscript' : 'cover');
     form.append('file', file);
@@ -528,6 +533,11 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
           // loader's reconciled file set can establish current-file state.
           setUploadState({ kind, busy: false, error: null });
           return refreshAuthoritativeFiles();
+        }
+        if (status === 409) {
+          setUploadState({ kind, busy: false, error: 'This book or file changed elsewhere. The latest version is being loaded.' });
+          onConcurrencyConflict?.();
+          return null;
         }
         setUploadState({ kind, busy: false, error: safeUploadError(data, status, kind) });
         return null;
@@ -570,6 +580,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       body: JSON.stringify({
         book_id: bookId,
         access_token: accessToken, // runtime URL value only; never persisted/logged
+        expected_revision: revision,
         step_name: 'content',
         next_step_name: nextStepName,
         save_type: saveType,
@@ -584,6 +595,7 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
       .then((res) => res.json().catch(() => null).then((data) => ({ ok: res.ok, status: res.status, data })))
       .then(({ ok, status, data }) => {
         if (ok === true && data && data.ok === true) {
+          setRevision(Number(data.employee_revision));
           cleanStateRef.current = JSON.stringify(state);
           // Server-authoritative progress: hydrate from the backend, never client-guess.
           if (data.progress_state) setServerProgress(progressFromServer(data.progress_state));
@@ -606,6 +618,12 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
           completion?.(true);
         } else {
           clearOverlay();
+          if (status === 409) {
+            setFeedback({ kind: 'error', msg: 'This book changed elsewhere. The latest version is being loaded.' });
+            onConcurrencyConflict?.();
+            completion?.(false);
+            return;
+          }
           setFeedback({ kind: 'error', msg: safeSaveError(data, status) });
           completion?.(false);
         }

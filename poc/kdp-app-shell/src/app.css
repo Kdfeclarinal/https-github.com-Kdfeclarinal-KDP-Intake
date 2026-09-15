@@ -2629,6 +2629,10 @@ a.kdp-btn:focus {
 .kdp-admin-review--loading .kdp-admin-review-section { min-height: 160px; }
 .kdp-review-panel--skeleton { position: static; display: grid; align-content: start; gap: 18px; min-height: 420px; padding: 22px; }
 .kdp-review-comment__actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.kdp-review-continuation { margin-top: 14px; padding: 12px; border-left: 3px solid var(--kdp-link); background: #f5fafb; }
+.kdp-review-continuation blockquote { margin: 8px 0; padding-left: 10px; border-left: 2px solid #b7c8cc; }
+.kdp-review-continuation blockquote p { margin: 0 0 4px; }
+.kdp-review-continuation blockquote footer, .kdp-review-continuation__status { color: var(--kdp-muted); font-size: 0.86rem; }
 .kdp-review-round-picker { display: inline-flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; font-weight: 700; }
 .kdp-review-round-picker select { min-height: 34px; padding: 5px 28px 5px 8px; border: 1px solid var(--kdp-border); border-radius: 5px; background: #fff; }
 .kdp-employee-update-notice { width: min(1080px, calc(100% - 32px)); margin: 18px auto 0; padding: 18px 22px; border: 1px solid #e0a800; border-radius: 8px; background: #fff8df; }

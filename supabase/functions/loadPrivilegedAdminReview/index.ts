@@ -68,6 +68,23 @@ Deno.serve(async (request) => {
         if (error) throw error
         return data || []
       },
+      listContinuations: async (roundId: string) => {
+        const { data: threads, error: threadError } = await supabase.from('book_review_update_threads')
+          .select('id,target_comment_id,target_item_id,source_round_number,request_body_snapshot,request_number_snapshot,reviewer_name_snapshot,requested_at,ready_via_reply,ready_via_change,ready_via_file_change,ready_at,readiness_evidence')
+          .eq('target_review_round_id', roundId)
+        if (threadError) throw threadError
+        const threadIds = (threads || []).map((thread) => thread.id)
+        if (!threadIds.length) return []
+        const { data: replies, error: replyError } = await supabase.from('book_review_update_replies')
+          .select('id,update_thread_id,body,author_name_snapshot,created_at')
+          .in('update_thread_id', threadIds)
+          .order('created_at', { ascending: true })
+        if (replyError) throw replyError
+        return (threads || []).map((thread) => ({
+          ...thread,
+          replies: (replies || []).filter((reply) => reply.update_thread_id === thread.id),
+        }))
+      },
     }, body.bookId, body.reviewRoundId)
     return json(result.body, result.status)
   } catch (error) {

@@ -12,7 +12,7 @@ const fx = { ok: true, base: 'USD', source: 'Frankfurter / ECB reference rates',
   const page = await context.newPage(); const saves = []; const submissions = [];
   await page.route('**/functions/v1/loadEmployeePage', (route) => { const request = JSON.parse(route.request().postData() || '{}'); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload(request.step_name)) }); });
   await page.route('**/functions/v1/loadPricingFxRates', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fx) }));
-  await page.route('**/functions/v1/saveEmployeeStep', (route) => { const request = JSON.parse(route.request().postData() || '{}'); saves.push(request); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data_valid: request.save_type === 'complete', progress_state: request.save_type === 'complete' ? { ...progress, steps: { ...progress.steps, pricing: { status: 'complete', isUnlocked: true, isComplete: true } } } : progress }) }); });
+  await page.route('**/functions/v1/saveEmployeeStep', (route) => { const request = JSON.parse(route.request().postData() || '{}'); saves.push(request); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, employee_revision: request.expected_revision + 1, data_valid: request.save_type === 'complete', progress_state: request.save_type === 'complete' ? { ...progress, steps: { ...progress.steps, pricing: { status: 'complete', isUnlocked: true, isComplete: true } } } : progress }) }); });
   await page.route('**/functions/v1/submitBookForApproval', (route) => { submissions.push(JSON.parse(route.request().postData() || '{}')); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, review_round_id: 'round-1', round_number: 1, overall_status: 'AWAITING_REVIEW', basecamp: { status: 'ready' } }) }); });
   await page.goto(`${BASE}/?book_id=fake-b&access_token=fake-t&step=pricing`, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.kdp-app--pricing'); await page.getByText(/Converted prices are estimates/).waitFor();
@@ -77,7 +77,7 @@ const fx = { ok: true, base: 'USD', source: 'Frankfurter / ECB reference rates',
   await page.getByText('Submitted for approval.').waitFor();
   check(saves.at(-1).save_type === 'complete', 'Submit first requests authoritative complete Pricing save');
   check(submissions.length === 1, 'double click creates one submission request');
-  check(Object.keys(submissions[0]).sort().join(',') === 'access_token,book_id', 'submission sends only book identity and opaque token');
+  check(Object.keys(submissions[0]).sort().join(',') === 'access_token,book_id,expected_revision', 'submission sends only book identity, opaque token, and authoritative revision');
 
   check(await page.getByRole('button', { name: '< Back to Content' }).isDisabled(), 'authoritative submission locks post-submit Pricing navigation');
 

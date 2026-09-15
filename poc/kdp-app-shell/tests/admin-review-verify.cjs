@@ -24,7 +24,7 @@ function jwt() {
       ok: true,
       identity: { displayName: 'Rae Reviewer' },
       book: { id: 'book-1', title: "Kein's Book", author: 'Kein Eclarinal' },
-      reviewRound: { id: 'round-1', roundNumber: 1, status: 'in_review', reachedSteps: ['details'] },
+      reviewRound: { id: 'round-1', roundNumber: 1, status: 'in_review', revision: 0, reachedSteps: ['details'] },
       permissions: { canMutate: true, canFinalize: false }, roundHistory: [],
       items: [
         { id: 'details-language', step: 'details', sectionKey: 'details.language', label: 'Language', sortOrder: 1, decision: 'pending', snapshot: { value: { value: 'English' } } },
@@ -34,20 +34,42 @@ function jwt() {
       ],
       comments: [], files: [{ fileName: 'manuscript.docx' }],
   };
-  const fulfillReview = (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(reviewData) });
+  const continuationData = {
+    ...reviewData,
+    book: { ...reviewData.book, id: 'book-context' },
+    reviewRound: { id: 'round-2', roundNumber: 2, status: 'in_review', reachedSteps: ['details'] },
+    items: [{ ...reviewData.items[0], id: 'continued-item', decision: 'needs_updates' }],
+    comments: [{
+      id: 'continued-comment', itemId: 'continued-item', body: 'Please correct this value.', author: 'Rae Reviewer',
+      createdAt: '2026-09-15T01:00:00Z', actionable: true, issueNumber: 1, authorActorType: 'privileged',
+      continuation: { sourceRoundNumber: 1, originalRequest: 'Please correct this value.', readyForRereview: true, readiness: { viaReply: true, viaChange: false, viaFileChange: false }, employeeReplies: [{ id: 'update-reply', body: 'Corrected and saved.', author: 'Employee', createdAt: '2026-09-15T00:30:00Z' }] },
+    }],
+  };
+  const historicalData = {
+    ...reviewData,
+    book: { ...reviewData.book, id: 'book-history' },
+    reviewRound: { id: 'round-old', roundNumber: 1, status: 'in_review', outcome: 'request_updates', submittedAt: '2026-09-14T09:00:00Z', submittedBy: 'Employee', finalizedAt: '2026-09-14T10:00:00Z', finalizedBy: 'Rae Reviewer', reviewer: 'Rae Reviewer', reachedSteps: ['details', 'content', 'pricing'] },
+    permissions: { canMutate: false, canFinalize: false },
+    items: reviewData.items.map((item) => ({ ...item, decision: item.decision === 'pending' ? 'needs_updates' : item.decision })),
+    comments: [{ id: 'history-comment', itemId: 'details-language', body: 'Historical request.', author: 'Rae Reviewer', createdAt: '2026-09-14T09:30:00Z', actionable: true, issueNumber: 1, authorActorType: 'privileged' }],
+  };
+  const dataFor = (body) => body.bookId === 'book-history' ? historicalData : body.bookId === 'book-context' ? continuationData : reviewData;
+  const fulfillReview = (route, data = reviewData) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
   await context.route('https://project.supabase.co/functions/v1/loadPrivilegedAdminReview', async (route) => {
     const body = route.request().postDataJSON();
-    check(body.bookId === 'book-1', 'review loader request is scoped by book id only');
-    return fulfillReview(route);
+    check(['book-1', 'book-context', 'book-history'].includes(body.bookId), 'review loader request is scoped by book id only');
+    return fulfillReview(route, dataFor(body));
   });
   await context.route('https://project.supabase.co/functions/v1/mutatePrivilegedAdminReview', async (route) => {
     const body = route.request().postDataJSON();
+    check(body.expectedRevision === reviewData.reviewRound.revision, 'review mutation carries the last authoritative revision');
     const item = reviewData.items.find((entry) => entry.id === body.itemId);
     if (body.action === 'approve' && item) item.decision = 'approved';
     if (body.action === 'comment' && item) {
       item.decision = 'needs_updates';
       reviewData.comments.push({ id: 'comment-1', itemId: item.id, body: body.body, author: 'Rae Reviewer', createdAt: new Date().toISOString(), actionable: true, issueNumber: 1, authorActorType: 'privileged' });
     }
+    reviewData.reviewRound.revision += 1;
     return fulfillReview(route);
   });
 
@@ -96,6 +118,21 @@ function jwt() {
   const mobileOverflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   check(!mobileOverflow && await page.locator('.kdp-review-panel').isVisible(), 'review panel and sections remain usable at mobile width');
   if (process.env.KDP_CAPTURE_DIR) await page.screenshot({ path: path.join(process.env.KDP_CAPTURE_DIR, 'admin-review-mobile.png'), fullPage: true });
+
+  const continuationPage = await context.newPage();
+  await continuationPage.goto(`${BASE}/?view=admin-review&book_id=book-context&review_step=details#access_token=${jwt()}&expires_in=3600&refresh_token=test-refresh&token_type=bearer`);
+  await continuationPage.getByText('Continued from Round 1').waitFor();
+  check(await continuationPage.getByText('Corrected and saved.').count() === 1, 'next active round shows employee continuation reply');
+  check(await continuationPage.getByText(/Ready for re-review via employee reply/).count() === 1, 'continuation readiness is visible without resolving the issue');
+  check(await continuationPage.getByRole('button', { name: 'Resolve' }).count() === 1, 'continued active issue still requires reviewer resolution');
+
+  const historicalPage = await context.newPage();
+  await historicalPage.goto(`${BASE}/?view=admin-review&book_id=book-history&review_step=details#access_token=${jwt()}&expires_in=3600&refresh_token=test-refresh&token_type=bearer`);
+  await historicalPage.getByText(/Historical review round 1/).waitFor();
+  check(await historicalPage.getByText(/permanently read-only/).count() === 1, 'finalized round shows historical attribution banner');
+  for (const name of ['Approve All', 'Reopen Decision', 'Add Comment', 'Reply', 'Edit', 'Resolve', 'Delete', 'Request Updates', 'Approve Book']) {
+    check(await historicalPage.getByRole('button', { name, exact: true }).count() === 0, `historical round omits ${name}`);
+  }
   await context.close();
   await browser.close();
   console.log(`RESULT ${passed}/${passed + failed}`);

@@ -1,9 +1,16 @@
 # Controlled Live Replacement Verification — PROCEDURE (PENDING APPROVAL)
 
+> **SUPERSEDED PRODUCT PATH:** This procedure is retained as historical evidence
+> for the currently implemented 2026-09-05 delete-and-replace flow. Decisions
+> 45–46 supersede that product behavior for genuine later replacements. The
+> durable target is a native V2/V3/etc. version in the same logical ReviewStudio
+> review, with the exact version mapped to the applicable KDP review round. Do
+> not execute this procedure as acceptance of the locked replacement contract.
+
 **STATUS: PREPARED. NOT EXECUTED. Requires explicit operator approval before any
 live Supabase mutation or ReviewStudio POST/DELETE.**
 
-This procedure verifies the Content file **true delete-and-replace** path against
+This procedure verifies the historical Content file **true delete-and-replace** path against
 the live ReviewStudio account (`iwdnow.reviewstudio.com`, API v2.1) and a
 **disposable staging book**. It performs real external ReviewStudio deletion and
 real Supabase `book_files` mutation — do NOT run without approval.

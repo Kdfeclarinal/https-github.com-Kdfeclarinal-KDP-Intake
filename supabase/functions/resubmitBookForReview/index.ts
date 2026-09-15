@@ -12,9 +12,12 @@ Deno.serve(async (request) => {
     const body = await request.json().catch(() => ({}))
     const bookId = String(body.bookId || '')
     const token = String(body.accessToken || '')
-    if (!bookId || !token) return json({ ok: false, error: 'Resubmission is not authorized.' }, 400)
+    const updateCycleId = String(body.updateCycleId || '')
+    const expectedRevision = Number(body.expectedRevision)
+    if (!bookId || !token || !updateCycleId || body.expectedRevision == null || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) return json({ ok: false, error: 'Resubmission is not authorized.' }, 400)
     const supabase = createClient(Deno.env.get('SUPABASE_URL') || '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '', { auth: { persistSession: false } })
-    const { data, error } = await supabase.rpc('resubmit_kdp_book_for_review', { p_book_id: bookId, p_token_hash: await sha256(token), p_source: 'employee_react_resubmit' })
+    const { data, error } = await supabase.rpc('resubmit_kdp_book_for_review', { p_book_id: bookId, p_token_hash: await sha256(token), p_update_cycle_id: updateCycleId, p_expected_revision: expectedRevision, p_source: 'employee_react_resubmit' })
+    if (error?.code === '40001') return json({ ok: false, error: 'This book changed elsewhere. Reload and try again.' }, 409)
     if (error || !data?.review_round_id) return json({ ok: false, error: 'The book is not ready for re-review.' }, 409)
     let basecamp = { status: 'pending', retryAvailable: true }
     try { basecamp = await syncReviewRoundWithRuntime(supabase, data.review_round_id) } catch { /* canonical resubmission remains committed */ }

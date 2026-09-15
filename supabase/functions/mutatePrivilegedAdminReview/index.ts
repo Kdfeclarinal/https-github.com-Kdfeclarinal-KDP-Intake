@@ -3,6 +3,7 @@ import { mutatePrivilegedAdminReview } from '../_shared/adminReviewMutation.ts'
 import { resolvePrivilegedActor } from '../_shared/privilegedRequest.ts'
 import { resolvePrivilegedAdminReview } from '../loadPrivilegedAdminReview/_adminReview.ts'
 import { syncReviewOutcomeWithRuntime } from '../_shared/basecampOutcomeRuntime.ts'
+import { BasecampError } from '../_shared/basecampClient.ts'
 
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -27,6 +28,19 @@ Deno.serve(async (request) => {
       listItems: async (roundId: string) => { const { data, error } = await supabase.from('book_review_items').select('*').eq('review_round_id', roundId); if (error) throw error; return data || [] },
       listComments: async (roundId: string) => { const { data, error } = await supabase.from('book_review_comments').select('*').eq('review_round_id', roundId).is('deleted_at', null); if (error) throw error; return data || [] },
       listRounds: async (bookId: string) => { const { data, error } = await supabase.from('book_review_rounds').select('id,round_number,status,outcome,finalized_at').eq('book_id', bookId).order('round_number', { ascending: false }); if (error) throw error; return data || [] },
+      listContinuations: async (roundId: string) => {
+        const { data: threads, error: threadError } = await supabase.from('book_review_update_threads')
+          .select('id,target_comment_id,target_item_id,source_round_number,request_body_snapshot,request_number_snapshot,reviewer_name_snapshot,requested_at,ready_via_reply,ready_via_change,ready_via_file_change,ready_at,readiness_evidence')
+          .eq('target_review_round_id', roundId)
+        if (threadError) throw threadError
+        const threadIds = (threads || []).map((thread) => thread.id)
+        if (!threadIds.length) return []
+        const { data: replies, error: replyError } = await supabase.from('book_review_update_replies')
+          .select('id,update_thread_id,body,author_name_snapshot,created_at')
+          .in('update_thread_id', threadIds).order('created_at', { ascending: true })
+        if (replyError) throw replyError
+        return (threads || []).map((thread) => ({ ...thread, replies: (replies || []).filter((reply) => reply.update_thread_id === thread.id) }))
+      },
     }
     const body = await request.json().catch(() => ({}))
     const result = await mutatePrivilegedAdminReview({
@@ -34,10 +48,12 @@ Deno.serve(async (request) => {
       findBook: common.findBook,
       findRound: common.findRound,
       findItem: common.findItem,
-      applyAction: async ({ bookId, roundId, actorId, action, payload }: Record<string, any>) => { const { data, error } = await supabase.rpc('apply_admin_review_action', { p_book_id: bookId, p_review_round_id: roundId, p_actor_user_id: actorId, p_action: action, p_payload: payload }); if (error) throw error; return data },
-      finalizeRound: async ({ bookId, roundId, actorId, outcome }: Record<string, any>) => {
-        const { data, error } = await supabase.rpc('finalize_kdp_review_round', { p_book_id: bookId, p_review_round_id: roundId, p_actor_user_id: actorId, p_outcome: outcome });
+      applyAction: async ({ bookId, roundId, actorId, action, expectedRevision, payload }: Record<string, any>) => { const { data, error } = await supabase.rpc('apply_admin_review_action', { p_book_id: bookId, p_review_round_id: roundId, p_actor_user_id: actorId, p_action: action, p_expected_revision: expectedRevision, p_payload: payload }); if (error?.code === '40001') throw new BasecampError(409, 'This review changed elsewhere. Refresh and try again.'); if (error) throw error; return data },
+      finalizeRound: async ({ bookId, roundId, actorId, outcome, expectedRevision }: Record<string, any>) => {
+        const { data, error } = await supabase.rpc('finalize_kdp_review_round', { p_book_id: bookId, p_review_round_id: roundId, p_actor_user_id: actorId, p_outcome: outcome, p_expected_revision: expectedRevision });
+        if (error?.code === '40001') throw new BasecampError(409, 'This review changed elsewhere. Refresh and try again.');
         if (error) throw error;
+        if (data?.replayed === true) return data;
         let auditStatus = 'failed';
         let auditError: string | null = 'basecamp_review_outcome_sync_failed';
         try {

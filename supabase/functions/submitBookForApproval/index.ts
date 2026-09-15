@@ -17,7 +17,8 @@ Deno.serve(async (request) => {
     const body = await request.json().catch(() => ({}));
     const bookId = String(body.book_id || "").trim();
     const accessToken = String(body.access_token || "").trim();
-    if (!uuid.test(bookId) || !accessToken) throw new BasecampError(400, "A valid book and access token are required.");
+    const expectedRevision = Number(body.expected_revision);
+    if (!uuid.test(bookId) || !accessToken || body.expected_revision == null || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new BasecampError(400, "A valid book, access token, and revision are required.");
     const tokenHash = await sha256(accessToken);
     const supabase = serverClient();
     const { data: token, error: tokenError } = await supabase.from("book_access_tokens")
@@ -31,10 +32,11 @@ Deno.serve(async (request) => {
       submitCanonical: async () => {
         const { data, error } = await supabase.rpc("submit_kdp_book_for_approval", {
           p_book_id: bookId, p_token_hash: tokenHash, p_source: "employee_pricing_submit",
+          p_expected_revision: expectedRevision,
         });
         if (error) {
           const message = String(error.message || "");
-          const status = /not authorized/i.test(message) ? 403 : /not currently|active review round/i.test(message) ? 409 : 422;
+          const status = error.code === "40001" || /not currently|active review round/i.test(message) ? 409 : /not authorized/i.test(message) ? 403 : 422;
           throw new BasecampError(status, status === 422 ? message : "The book could not be submitted in its current state.");
         }
         if (!data?.review_round_id) throw new BasecampError(500, "The submitted review round could not be confirmed.");

@@ -2,7 +2,7 @@
 // with a fake token/response; never uses a real scoped token.
 const { chromium } = require('playwright');
 
-const BASE = 'http://localhost:8137';
+const BASE = `http://127.0.0.1:${process.env.KDP_VERIFY_PORT || '8139'}`;
 
 // A plausible successful loadEmployeePage response (read-only, no secrets).
 const MOCK_OK = {
@@ -73,10 +73,11 @@ function attachMock(page) {
   ok('Primary Author first + last present', (await page.locator('#kdp-author-first').count()) === 1 && (await page.locator('#kdp-author-last').count()) === 1);
   // Contributors add/remove
   ok('Contributors "Add Another" present', (await page.getByRole('button', { name: 'Add Another' }).count()) === 1);
+  ok('Contributor editor starts with one row', (await page.locator('.kdp-contrib-row').count()) === 1);
   await page.getByRole('button', { name: 'Add Another' }).click();
-  ok('Contributor row added', (await page.locator('.kdp-contrib-row').count()) === 1);
+  ok('Contributor row added', (await page.locator('.kdp-contrib-row').count()) === 2);
   await page.locator('.kdp-contrib-row .kdp-btn--remove', { hasText: 'Remove' }).first().click();
-  ok('Contributor row removed', (await page.locator('.kdp-contrib-row').count()) === 0);
+  ok('Contributor row removed while one editable row remains', (await page.locator('.kdp-contrib-row').count()) === 1);
   // Description + 4000 count
   ok('Description textarea present', await page.locator('#kdp-description').count() === 1);
   await page.locator('#kdp-description').fill('Hello world description');
@@ -106,29 +107,28 @@ function attachMock(page) {
   await page.locator('input[name="publishOption"]').nth(1).check(); // preorder
   ok('Pre-order date revealed when Pre-order selected', (await page.locator('#kdp-preorder-date').count()) === 1);
   await page.locator('input[name="publishOption"]').nth(0).check(); // release now
-  ok('Pre-order date hidden when Release now', (await page.locator('#kdp-preorder-date').count()) === 0);
-  // Save buttons present + disabled (no saveEmployeeStep)
+  ok('Pre-order date collapses when Release now', await page.locator('.kdp-preorder-extra').evaluate((el) => !el.classList.contains('is-open')));
+  // Save actions remain available while no save request is in flight.
   ok('Save as Draft present', (await page.getByRole('button', { name: 'Save as Draft' }).count()) === 1);
   ok('Save and Continue present', (await page.getByRole('button', { name: 'Save and Continue' }).count()) === 1);
-  ok('Save buttons disabled (no persistence yet)', await page.getByRole('button', { name: 'Save and Continue' }).isDisabled());
+  ok('Save actions enabled when idle', !(await page.getByRole('button', { name: 'Save and Continue' }).isDisabled()));
 
-  // Category prerequisite: simulate unanswered adult-only then attempt
-  // (reset adult-only by reload would be heavy; instead test prereq message path:
-  //  Fails because in this flow adultOnly is 'no' -> category connection deferred note shows)
-  // Click "Choose categories"
+  // With marketplace and audience answered, the authoritative taxonomy chooser opens.
   await page.getByRole('button', { name: 'Choose categories' }).click();
-  ok('Category deferred note present (no invented taxonomy)',
-    (await page.locator('.kdp-cat-area .kdp-note', { hasText: 'next milestone' }).count()) === 1);
-  ok('No fake category examples rendered', (await page.locator('.kdp-cat-item').count()) === 0);
+  ok('Category taxonomy chooser opens', (await page.getByRole('dialog', { name: 'Categories' }).count()) === 1);
+  ok('Category taxonomy chooser exposes placement controls',
+    (await page.locator('.kdp-cat-block').count()) === 1 &&
+    (await page.getByRole('button', { name: 'Save categories' }).count()) === 1);
+  await page.getByRole('button', { name: 'Cancel' }).click();
 
   // CSS leak check: native GHL body should NOT be styled by our rules
   ok('CSS scoped (body has no kdp class)', await page.evaluate(() => !document.body.className.includes('kdp-')));
 
-  // saveEmployeeStep never called — verify by network: no call to saveEmployeeStep
+  // Verify incomplete completion is rejected before saveEmployeeStep is called.
   const saveCalls = [];
   page.on('request', (r) => { if (r.url().includes('saveEmployeeStep')) saveCalls.push(r.url()); });
-  await page.getByRole('button', { name: 'Save and Continue' }).click({ force: true });
-  ok('Save and Continue disabled (click via force still triggers no save)', true);
+  await page.getByRole('button', { name: 'Save and Continue' }).click();
+  ok('Incomplete Details completion stays client-gated', saveCalls.length === 0, 'calls=' + saveCalls.length);
 
   await ctx.close();
 
@@ -146,9 +146,9 @@ function attachMock(page) {
     const g = document.querySelector('.kdp-keyword-grid');
     return getComputedStyle(g).gridTemplateColumns.split(' ').length === 1;
   }));
-  ok('Mobile: section stacks (flex-direction column)', await mpage.evaluate(() => {
+  ok('Mobile: section grid stacks to one column', await mpage.evaluate(() => {
     const s = document.querySelector('.kdp-section');
-    return getComputedStyle(s).flexDirection === 'column';
+    return getComputedStyle(s).gridTemplateColumns.split(' ').length === 1;
   }));
   await mctx.close();
 
@@ -184,7 +184,7 @@ function attachMock(page) {
   await browser.close();
 
   // saveEmployeeStep network assertion across all contexts
-  ok('saveEmployeeStep never called over network (any context)', saveCalls.length === 0, 'calls=' + saveCalls.length);
+  ok('Invalid completion never calls saveEmployeeStep', saveCalls.length === 0, 'calls=' + saveCalls.length);
   ok('No console/page errors', consoleErrors.length === 0, consoleErrors.join(' | '));
 
   // Report

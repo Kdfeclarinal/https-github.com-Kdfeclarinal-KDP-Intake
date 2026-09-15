@@ -75,6 +75,9 @@ export type ReplaceInput = {
   rsHeaders: ReviewStudioAuthHeaders;
   signedUrlTtlSec?: number; // default 3600
   safeFileName?: (name: string) => string;
+  tokenHash: string;
+  expectedRevision: number;
+  expectedCurrentFileId: string;
 };
 
 export type CurrentFileRow = {
@@ -322,15 +325,19 @@ async function promoteReplacementBookFile(
   sectionKey: string,
   oldBookFileId: string,
   newBookFileId: string,
+  tokenHash: string,
+  expectedRevision: number,
 ): Promise<void> {
-  const { data, error } = await supabase.rpc("promote_replacement_book_file", {
+  const { data, error } = await supabase.rpc("promote_content_file_if_revision", {
     p_book_id: bookId,
+    p_token_hash: tokenHash,
+    p_expected_revision: expectedRevision,
     p_file_type: fileType,
     p_section_key: sectionKey,
-    p_old_file_id: oldBookFileId,
+    p_expected_old_file_id: oldBookFileId,
     p_new_file_id: newBookFileId,
   });
-  if (error || data !== true) {
+  if (error || typeof data !== "number" || !Number.isSafeInteger(data)) {
     throw new Error(
       "Could not atomically promote replacement book_files row: " +
         (error?.message || "the current file changed during replacement"),
@@ -361,6 +368,9 @@ export async function replaceContentFile(input: ReplaceInput): Promise<ReplaceRe
       status: 409,
       error: "No current book_files row to replace.",
     };
+  }
+  if (current.id !== input.expectedCurrentFileId) {
+    return { ok: false, status: 409, error: "The current file changed elsewhere. Reload and try again." };
   }
   if (!current.reviewstudio_review_id || !current.reviewstudio_file_id) {
     return {
@@ -516,13 +526,16 @@ export async function replaceContentFile(input: ReplaceInput): Promise<ReplaceRe
       input.sectionKey,
       current.id,
       inserted.id,
+      input.tokenHash,
+      input.expectedRevision,
     );
   } catch (e: any) {
+    const stale = /changed elsewhere|40001/i.test(e?.message || "");
     return {
       ok: false,
-      status: 500,
+      status: stale ? 409 : 500,
       error:
-        e?.message ||
+        (stale ? "The current file changed elsewhere. Reload and try again." : e?.message) ||
         "Could not mark the old book_files row as superseded. " +
           "Replacement aborted; new RS file and new book_files row " +
           "are real and require reconciliation.",

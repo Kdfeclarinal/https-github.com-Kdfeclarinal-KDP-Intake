@@ -9,7 +9,7 @@ import {
 } from '../state/employeeState.js';
 
 // Employee Kindle eBook Details page.
-// Local-only form state. No backend save in this milestone.
+// Local form state persists through the server-authoritative employee save contract.
 // Uses React.createElement so the classic IIFE build needs no JSX transform.
 //
 // This is a DIRECT, faithful translation of the live KDP Details UI
@@ -1173,7 +1173,7 @@ function KdpDescriptionEditor({ value, onChange, maxLength }) {
 
 // --- main component ------------------------------------------------------
 
-export function DetailsPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate }) {
+export function DetailsPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate, employeeRevision, onConcurrencyConflict }) {
   const [state, setState] = React.useState(() => initState(book, savedState));
   const cleanStateRef = React.useRef(JSON.stringify(state));
   const [categoryAttempted, setCategoryAttempted] = React.useState(false);
@@ -1202,6 +1202,7 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
   const [serverProgress, setServerProgress] = React.useState(
     initialProgress ? progressFromServer(initialProgress) : null
   );
+  const [revision, setRevision] = React.useState(Number(employeeRevision) || 0);
 
   const setField = (key, value) =>
     setState((s) => Object.assign({}, s, { [key]: value }));
@@ -1266,6 +1267,7 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
       body: JSON.stringify({
         book_id: bookId,
         access_token: accessToken, // runtime URL value only; never persisted/logged
+        expected_revision: revision,
         step_name: 'details',
         next_step_name: nextStepName,
         save_type: saveType,
@@ -1286,6 +1288,7 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
         // saving phase is never visible to the user (or the test).
         window.setTimeout(() => {
           if (ok === true && data && data.ok === true) {
+            setRevision(Number(data.employee_revision));
             cleanStateRef.current = JSON.stringify(state);
             if (data.progress_state) setServerProgress(progressFromServer(data.progress_state));
             if (saveType === 'complete') {
@@ -1326,6 +1329,13 @@ export function DetailsPage({ book, stepName, bookId, accessToken, savedState, i
             }
             completion?.(true);
           } else {
+            if (status === 409) {
+              setFeedback({ kind: 'error', msg: 'This book changed elsewhere. The latest version is being loaded.' });
+              onConcurrencyConflict?.();
+              clearOverlay();
+              completion?.(false);
+              return;
+            }
             setFeedback({ kind: 'error', msg: safeSaveError(data, status) });
             clearOverlay();
             completion?.(false);

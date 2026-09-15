@@ -276,6 +276,9 @@ Deno.serve(async (request) => {
         });
         verifiedRows = recon.verified;
         if (recon.marked_stale.length > 0) {
+          const { data: revisedBook, error: revisedBookError } = await supabase.from("books").select("employee_revision").eq("id", bookId).maybeSingle();
+          if (revisedBookError) throw revisedBookError;
+          bookRow.employee_revision = Number(revisedBook?.employee_revision) || 0;
           console.warn(
             "[loadEmployeePage] reconciled " +
               recon.marked_stale.length +
@@ -321,11 +324,38 @@ Deno.serve(async (request) => {
         .select("id,round_number,outcome,finalized_at").eq("id", bookRow.latest_review_round_id)
         .eq("book_id", bookId).maybeSingle();
       if (round?.finalized_at && round.outcome === "request_updates") {
-        const [{ data: updateItems }, { data: updateComments }] = await Promise.all([
+        const [{ data: updateItems }, { data: updateComments }, { data: updateCycle }] = await Promise.all([
           supabase.from("book_review_items").select("id,step_name,section_key,decision").eq("review_round_id", round.id),
           supabase.from("book_review_comments").select("id,review_item_id,parent_comment_id,body,comment_text,round_comment_number,actionable,created_at,deleted_at").eq("review_round_id", round.id).is("deleted_at", null),
+          supabase.from("book_review_update_cycles").select("id,status").eq("source_review_round_id", round.id).eq("book_id", bookId).maybeSingle(),
         ]);
-        employeeUpdate = sanitizeEmployeeUpdateContext({ roundNumber: round.round_number, step: stepName, items: updateItems || [], comments: updateComments || [] });
+        let updateThreads: JsonObject[] = [];
+        let updateReplies: JsonObject[] = [];
+        if (updateCycle?.id && updateCycle.status === "active") {
+          const { data: threadRows, error: threadError } = await supabase.from("book_review_update_threads")
+            .select("id,source_item_id,source_comment_id,step_name,section_key,request_body_snapshot,request_number_snapshot,requested_at,baseline_value,baseline_file_references,status")
+            .eq("update_cycle_id", updateCycle.id).eq("step_name", stepName).eq("status", "active");
+          if (threadError) throw threadError;
+          updateThreads = threadRows || [];
+          const threadIds = updateThreads.map((thread) => String(thread.id || "")).filter(Boolean);
+          if (threadIds.length) {
+            const { data: replyRows, error: replyError } = await supabase.from("book_review_update_replies")
+              .select("id,update_thread_id,body,author_name_snapshot,created_at").in("update_thread_id", threadIds).order("created_at", { ascending: true });
+            if (replyError) throw replyError;
+            updateReplies = replyRows || [];
+          }
+        }
+        employeeUpdate = sanitizeEmployeeUpdateContext({
+          updateCycleId: updateCycle?.id,
+          roundNumber: round.round_number,
+          step: stepName,
+          items: updateItems || [],
+          comments: updateComments || [],
+          threads: updateThreads,
+          replies: updateReplies,
+          currentSections: asObject(stepRow?.state_json).sections || {},
+          currentFiles: verifiedRows,
+        });
       }
     }
 
@@ -340,6 +370,7 @@ Deno.serve(async (request) => {
           : null,
         files: normalizedFiles.map(publicEmployeeFile),
         progress_state: bookRow.progress_state || null,
+        employee_revision: Number(bookRow.employee_revision) || 0,
         employee_update: employeeUpdate
       },
       200

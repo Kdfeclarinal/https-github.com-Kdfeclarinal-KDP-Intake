@@ -50,6 +50,11 @@ When security guidance conflicts, use:
 
 For current advisories, platform policies, authentication behavior, security headers, SDK changes, or other time-sensitive vendor behavior, verify current official documentation. If live research is unavailable, use the project's research handoff process instead of guessing.
 
+Product/workflow security requirements through Decision 67 are locked in
+[`docs/KDP_LOCKED_DECISIONS_1_67.md`](docs/KDP_LOCKED_DECISIONS_1_67.md).
+Its supersession and clarification rules govern older project notes; this file
+must not claim an unimplemented control is active.
+
 ---
 
 # Active Security Capability Routing
@@ -161,7 +166,12 @@ browser receives an opaque scoped access token
 
 Raw access tokens must not be stored in the database when a hash is sufficient for lookup/verification.
 
-## Employee Bookshelf Token
+## Historical Employee Bookshelf Token — Superseded Product Path
+
+Older staged-cutover code may retain this token category, but it does not grant
+access to the locked React Bookshelf. The Bookshelf is privileged-user only;
+employees enter a specific assigned book through a book-scoped launcher/deep
+link.
 
 Expected security properties:
 
@@ -202,7 +212,12 @@ and frontend role flags are never capability proof. Privileged tables remain
 RLS protected and unavailable for direct browser reads or writes; the
 service-role key is confined to the authorizing Edge Function.
 
-## Admin Review Token
+## Historical Admin Review Token — Legacy Compatibility
+
+These checks remain relevant only to retained legacy token paths during the
+staged cutover. React Admin Review authenticates with Google/Supabase and then
+authorizes the active privileged-user capability, book, round, assignment, and
+state on the server.
 
 Required checks before protected admin operations:
 
@@ -240,9 +255,17 @@ Required-field rules must be enforced server-side on completion.
 
 Draft saves may be more permissive only when the workflow explicitly allows incomplete drafts.
 
-## Employee Writes — Content File Replacement Boundary
+## Employee Writes — Historical Content File Replacement Boundary
 
 **Added 2026-09-05 with the true-replacement flow.**
+
+This section records the currently implemented delete-and-replace behavior; it
+is not the durable product target for genuine later replacements. Decisions
+45–46 supersede simple ReviewStudio replacement/overwrite language. The locked
+target keeps the same logical ReviewStudio review, creates a native V2/V3/etc.
+version, and freezes the exact ReviewStudio version reference into each
+applicable KDP review round. That target is not implemented and requires a
+staging contract test before reliance on ReviewStudio version behavior.
 
 The Content employee upload path now performs a TRUE file replacement
 (POST new file → transactionally promote the staged row and mark the old
@@ -349,6 +372,12 @@ The local workflow-completion implementation re-checks on every mutation:
 - item/thread membership in the exact book and round
 - comment limits / input constraints
 
+A review round may temporarily have no reviewer while awaiting assignment. No
+normal review mutation is authorized in that condition. Once assigned, exactly
+that one eligible reviewer owns normal mutations. Owner or a properly capable
+Tech Admin must use a deliberate, audited assignment/reassignment or takeover
+path; privileged observation alone never grants mutation authority.
+
 Reviewer success is reflected only after the RPC succeeds and the sanitized
 authoritative round is reloaded. Round-local actionable issue numbers are
 allocated under a transaction advisory lock. Query parameters, item IDs,
@@ -379,15 +408,22 @@ The finalization RPC independently requires `can_finalize_book`, locks the book
 and active round, revalidates every required decision, records status/audit
 history, and finalizes once. An assigned reviewer may finalize only with that
 capability; an owner-level override additionally requires the existing
-reassignment/manage authority. Finalized review content is immutable except for
-the narrowly authorized append-only employee reply during Request Updates.
+reassignment/manage authority.
 
-Employee update writes repeat the book-scoped opaque-token authorization and
+The locked Decisions 58/63/67 boundary has no finalized-round mutation
+exception: the submitted snapshot is immutable from Submit, and the round,
+items, comments, and replies become permanently immutable when Request Updates
+or Approve Book commits. Employee Updates replies, readiness evidence, changed
+values, and changed file/version references live in separate linked continuation
+state and are consumed transactionally into the next snapshot and round.
+
+Employee update writes must repeat book-scoped opaque-token authorization and
 permit only reviewer-requested section keys or exact requested file sections.
-Ready for re-review is calculated from normalized persisted values, authoritative
-current file/version references, or an employee reply; the browser cannot assert
-it. Resubmission locks the book, creates one new active round/snapshot, and uses
-the database uniqueness constraint to reject duplicate active rounds.
+Ready for re-review is derived from normalized persisted values, authoritative
+current file/version references, or a continuation reply; the browser cannot
+assert it. Resubmission must lock the book, consume the continuation state, and
+create one new active round/snapshot without changing the finalized source
+round.
 
 Basecamp outcome synchronization happens after canonical commit. Failures update
 sanitized retry state and may be retried only by a current privileged identity
@@ -578,6 +614,15 @@ Use appropriate combinations of:
 - latest-version checks
 
 Do not add complex idempotency infrastructure to trivial draft saves unless repository evidence shows it is needed.
+
+Locked reviewer and employee writes require optimistic concurrency. Reviewer
+mutations must validate an expected active-round revision and increment it on
+success; employee saves must reject a stale expected version instead of silently
+overwriting newer canonical state. The current local workflow implements these
+contracts through an active-round revision and one coherent book-level employee
+revision. Current-file promotion additionally compares the file identity the
+employee actually observed. These controls remain unactivated until the pending
+migration and corresponding Edge Functions are deployed together and smoke-tested.
 
 Finalized review rounds, their review items, and their comments/replies are
 immutable history. Reviewer assignment is stored by privileged-user ID on the

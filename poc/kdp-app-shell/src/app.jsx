@@ -32,6 +32,8 @@ function useProtectedEmployeeRead(step) {
   // never crashes on a payload that pre-dates this field.
   const [files, setFiles] = React.useState([]);
   const [employeeUpdate, setEmployeeUpdate] = React.useState(null);
+  const [employeeRevision, setEmployeeRevision] = React.useState(0);
+  const [refreshVersion, setRefreshVersion] = React.useState(0);
 
   // Re-run the protected read whenever the requested step changes (Details ->
   // Content navigation). book_id + access_token are read from the URL once.
@@ -48,6 +50,7 @@ function useProtectedEmployeeRead(step) {
     setProgressState(null);
     setFiles([]);
     setEmployeeUpdate(null);
+    setEmployeeRevision(0);
 
     if (!bookId || !accessToken) {
       setState('missing');
@@ -86,6 +89,7 @@ function useProtectedEmployeeRead(step) {
           // an unknown field as a non-empty record.
           setFiles(Array.isArray(data.files) ? data.files : []);
           setEmployeeUpdate(data.employee_update || null);
+          setEmployeeRevision(Number(data.employee_revision) || 0);
           setState('success');
         } else {
           setState('error');
@@ -94,9 +98,9 @@ function useProtectedEmployeeRead(step) {
       .catch(() => { if (!cancelled) setState('error'); });
 
     return () => { cancelled = true; };
-  }, [step]);
+  }, [step, refreshVersion]);
 
-  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate };
+  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, refresh: () => setRefreshVersion((value) => value + 1) };
 }
 
 function ProtectedReadGate() {
@@ -106,7 +110,7 @@ function ProtectedReadGate() {
   // authoritative on which step is unlocked for this access context.
   const initialStep = new URLSearchParams(window.location.search).get('step') || 'details';
   const [step, setStep] = React.useState(initialStep);
-  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate } =
+  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, refresh } =
     useProtectedEmployeeRead(step);
   React.useEffect(() => {
     const syncStep = () => {
@@ -164,7 +168,8 @@ function ProtectedReadGate() {
     setStep(nextStep);
   };
   if (step === 'content') {
-    return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken }), React.createElement(ContentPage, {
+    return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(ContentPage, {
+      key: `content:${employeeRevision}`,
       book,
       stepName,
       bookId,
@@ -175,22 +180,28 @@ function ProtectedReadGate() {
       // manuscript/cover presence, view URLs, and the cover thumbnail.
       // DetailsPage is intentionally unchanged.
       files,
+      employeeRevision,
+      onConcurrencyConflict: refresh,
       onNavigate: navigate,
     }));
   }
   if (step === 'pricing') {
-    return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken }), React.createElement(PricingPage, {
+    return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(PricingPage, {
+      key: `pricing:${employeeRevision}`,
       book, bookId, accessToken, savedState,
-      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate,
+      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate, employeeRevision, onConcurrencyConflict: refresh,
     }));
   }
-  return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken }), React.createElement(DetailsPage, {
+  return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(DetailsPage, {
+    key: `details:${employeeRevision}`,
     book,
     stepName,
     bookId,
     accessToken,
     savedState,
     initialProgress: progressState,
+    employeeRevision,
+    onConcurrencyConflict: refresh,
     onNavigate: navigate,
   }));
 }

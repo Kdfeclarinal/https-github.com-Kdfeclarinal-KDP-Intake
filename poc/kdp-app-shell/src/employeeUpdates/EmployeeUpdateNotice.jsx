@@ -22,15 +22,16 @@ export function useEmployeeUpdateSection(label) {
   return { locked: !requested, requested };
 }
 
-export function EmployeeUpdateNotice({ context, bookId, accessToken }) {
+export function EmployeeUpdateNotice({ context, bookId, accessToken, employeeRevision, onConcurrencyConflict }) {
   const [replying, setReplying] = React.useState(null);
   const [body, setBody] = React.useState('');
   const [message, setMessage] = React.useState('');
   if (!context) return null;
   const submitReply = async () => {
-    const response = await fetch('https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/respondEmployeeReview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId, accessToken, commentId: replying, body }) });
+    const response = await fetch('https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/respondEmployeeReview', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookId, accessToken, expectedRevision: employeeRevision, commentId: replying, body }) });
+    if (response.status === 409) { setMessage('This book changed elsewhere. The latest version is being loaded.'); onConcurrencyConflict?.(); return; }
     if (!response.ok) { setMessage('Your reply could not be saved.'); return; }
-    setMessage('Reply saved. This issue is ready for re-review.'); setReplying(null); setBody('');
+    setMessage('Reply saved. This issue is ready for re-review.'); setReplying(null); setBody(''); onConcurrencyConflict?.();
   };
   return h('section', { className: 'kdp-employee-update-notice', 'aria-label': 'Requested updates' },
     h('h2', null, `Employee Updates — Round ${context.roundNumber}`),

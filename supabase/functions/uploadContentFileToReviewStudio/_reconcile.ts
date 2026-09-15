@@ -61,6 +61,7 @@ export type ReviewStudioAuthHeaders = {
 
 export type SupabaseLike = {
   from: (table: string) => any;
+  rpc: (name: string, args: Record<string, unknown>) => Promise<{ data: unknown; error: { message?: string } | null }>;
 };
 
 export type FetchLike = (
@@ -228,22 +229,13 @@ async function markRowStale(
   reason: string,
   nowIso: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const existingMetadata =
-    row.metadata && typeof row.metadata === "object" ? { ...row.metadata } : {};
-  const nextMetadata = Object.assign({}, existingMetadata, {
-    reconciliation_reason: reason,
-    reconciled_at: nowIso,
-  });
+  void reason;
   try {
-    const { error } = await supabase
-      .from("book_files")
-      .update({
-        is_latest: false,
-        // replaced_by_file_id is intentionally NOT set: an external
-        // deletion is not a replacement.
-        metadata: nextMetadata,
-      })
-      .eq("id", row.id);
+    const { error } = await supabase.rpc("reconcile_missing_content_file", {
+      p_book_id: row.book_id,
+      p_file_id: row.id,
+      p_reconciled_at: nowIso,
+    });
     if (error) {
       return { ok: false, error: error.message || String(error) };
     }

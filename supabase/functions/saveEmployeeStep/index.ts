@@ -118,6 +118,7 @@ Deno.serve(async (req) => {
       asObject(payload.extracted_fields)
     );
     const source = cleanText(payload.source || "ghl_employee_page").slice(0, 120);
+    const expectedRevision = Number(payload.expected_revision);
 
     if (!bookId) {
       return jsonResponse({ ok: false, error: "Missing book_id." }, 400);
@@ -133,6 +134,10 @@ Deno.serve(async (req) => {
 
     if (!isSaveType(saveType)) {
       return jsonResponse({ ok: false, error: "Invalid save_type." }, 400);
+    }
+
+    if (payload.expected_revision == null || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      return jsonResponse({ ok: false, error: "Missing or invalid expected_revision." }, 400);
     }
 
     const tokenHash = await sha256Hex(accessToken);
@@ -221,7 +226,8 @@ Deno.serve(async (req) => {
           "book_title",
           "subtitle",
           "primary_author_name",
-          "primary_marketplace"
+          "primary_marketplace",
+          "employee_revision"
         ].join(",")
       )
       .eq("id", bookId)
@@ -431,81 +437,6 @@ Deno.serve(async (req) => {
       }
     };
 
-    const { error: stepUpsertError } = await supabase
-      .from("book_step_data")
-      .upsert(stepDataRow, {
-        onConflict: "book_id,step_name"
-      });
-
-    if (stepUpsertError) {
-      throw stepUpsertError;
-    }
-
-    /*
-     * Completing a step unlocks the next step, but must never reset an
-     * existing next-step row or erase its state. This is intentionally an
-     * update-only operation when the row already exists.
-     */
-    if (resultingComplete && nextStepName) {
-      const existingNextRow = stepMap[nextStepName] || null;
-
-      if (existingNextRow) {
-        const nextStepUpdate: Record<string, unknown> = {
-          is_unlocked: true
-        };
-
-        if (existingNextRow.is_complete !== true) {
-          const currentNextStatus = normalizeStepStatus(
-            existingNextRow.step_status,
-            true,
-            false
-          );
-
-          if (
-            currentNextStatus === "locked" ||
-            currentNextStatus === "not_started"
-          ) {
-            nextStepUpdate.step_status = "in_progress";
-          }
-        }
-
-        const { error: nextStepUpdateError } = await supabase
-          .from("book_step_data")
-          .update(nextStepUpdate)
-          .eq("book_id", bookId)
-          .eq("step_name", nextStepName);
-
-        if (nextStepUpdateError) {
-          throw nextStepUpdateError;
-        }
-      } else {
-        const { error: nextStepInsertError } = await supabase
-          .from("book_step_data")
-          .insert({
-            book_id: bookId,
-            step_name: nextStepName,
-            step_label: getStepLabel(nextStepName),
-            save_type: "draft",
-            step_status: "in_progress",
-            is_complete: false,
-            is_unlocked: true,
-            state_json: {},
-            extracted_fields: {},
-            validation_required_keys: getCanonicalRequiredKeys(nextStepName),
-            validation_errors: {},
-            saved_at: null,
-            metadata: {
-              unlocked_by_step: stepName,
-              unlocked_at: now
-            }
-          });
-
-        if (nextStepInsertError) {
-          throw nextStepInsertError;
-        }
-      }
-    }
-
     const bookUpdate: Record<string, unknown> = {
       progress_state: nextProgress,
       current_employee_step: nextProgress.activeStep,
@@ -540,15 +471,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    const { error: bookUpdateError } = await supabase
-      .from("books")
-      .update(bookUpdate)
-      .eq("id", bookId);
-
-    if (bookUpdateError) {
-      throw bookUpdateError;
-    }
-
     const completionWasPreserved =
       saveType === "draft" && previouslyComplete && resultingComplete;
 
@@ -569,50 +491,44 @@ Deno.serve(async (req) => {
           ? `${getStepLabel(stepName)} completed from GHL intake.`
           : `${getStepLabel(stepName)} draft saved from GHL intake.`;
 
-    const { error: historyError } = await supabase
-      .from("book_status_history")
-      .insert({
-        book_id: bookId,
-        action: historyAction,
-        from_status: bookRow.overall_status,
-        to_status: bookRow.overall_status,
-        step_name: stepName,
-        actor_type: "employee",
-        actor_name: tokenRow.employee_name || null,
-        actor_email: tokenRow.employee_email || null,
-        note: historyNote,
-        metadata: {
-          source,
-          requested_save_type: saveType,
-          previously_complete: previouslyComplete,
-          resulting_complete: resultingComplete,
-          completion_preserved: completionWasPreserved,
-          completion_removed: completionWasRemoved,
-          data_valid: validation.valid,
-          validation_errors: validation.errors,
-          progress_state: nextProgress
-        }
-      });
+    const historyRow = {
+      action: historyAction,
+      actor_name: tokenRow.employee_name || null,
+      actor_email: tokenRow.employee_email || null,
+      note: historyNote,
+      metadata: {
+        source,
+        requested_save_type: saveType,
+        previously_complete: previouslyComplete,
+        resulting_complete: resultingComplete,
+        completion_preserved: completionWasPreserved,
+        completion_removed: completionWasRemoved,
+        data_valid: validation.valid,
+        validation_errors: validation.errors,
+        progress_state: nextProgress
+      }
+    };
 
-    if (historyError) {
-      throw historyError;
-    }
-
-    /* Token usage metadata is useful, but must not turn a successful save
-       into a false client failure. */
-    const { error: tokenUsageError } = await supabase
-      .from("book_access_tokens")
-      .update({
-        last_used_at: now,
-        updated_at: now
-      })
-      .eq("id", tokenRow.id);
-
-    if (tokenUsageError) {
-      console.warn("[saveEmployeeStep] Token usage timestamp failed:", {
-        tokenId: tokenRow.id,
-        message: tokenUsageError.message
-      });
+    const { data: committed, error: commitError } = await supabase.rpc(
+      "save_employee_step_if_revision",
+      {
+        p_book_id: bookId,
+        p_token_hash: tokenHash,
+        p_expected_revision: expectedRevision,
+        p_step_name: stepName,
+        p_save_type: saveType,
+        p_step_data: stepDataRow,
+        p_next_step_name: resultingComplete ? nextStepName : null,
+        p_next_progress: nextProgress,
+        p_book_patch: bookUpdate,
+        p_history: historyRow
+      }
+    );
+    if (commitError) {
+      if (commitError.code === "40001") {
+        return jsonResponse({ ok: false, error: "This book changed elsewhere. Reload and try again." }, 409);
+      }
+      throw commitError;
     }
 
     return jsonResponse(
@@ -634,7 +550,8 @@ Deno.serve(async (req) => {
           saveType === "complete" && resultingComplete
             ? nextStepName
             : null,
-        saved_at: now
+        saved_at: now,
+        employee_revision: Number(committed?.employee_revision)
       },
       200
     );

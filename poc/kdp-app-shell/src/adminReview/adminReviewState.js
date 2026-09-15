@@ -33,6 +33,7 @@ function numberComments(comments) {
       resolvedAt: comment.resolvedAt || comment.resolved_at || null,
       editedAt: comment.editedAt || comment.edited_at || null,
       authorActorType: comment.authorActorType || comment.author_actor_type || 'privileged',
+      continuation: comment.continuation || null,
       issueNumber: comment.issueNumber || comment.round_comment_number || issueNumber,
       persisted: comment.persisted !== false,
     };
@@ -112,4 +113,8 @@ export function reviewStepAccessible(items, step, reachedSteps = []) {
 
 export function reviewIssueNumber(comments, itemId) {
   return numberComments(Array.isArray(comments) ? comments : []).find((comment) => comment.itemId === itemId)?.issueNumber || null;
+}
+
+export function reviewMutationControlsVisible(payload) {
+  return !payload?.reviewRound?.finalizedAt && payload?.permissions?.canMutate === true;
 }

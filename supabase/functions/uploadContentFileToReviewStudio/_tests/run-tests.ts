@@ -66,7 +66,7 @@ function makeSupabase(opts: {
   currentRow?: { id: string; reviewstudio_review_id: string; reviewstudio_file_id: string; reviewstudio_project_id: string } | null;
   insertError?: { message: string };
   supersedeError?: { message: string };
-  promotionResult?: boolean;
+  promotionResult?: number | false;
   tempUploadError?: { message: string };
   signedUrlError?: { message: string };
 } = {}) {
@@ -76,7 +76,7 @@ function makeSupabase(opts: {
     async rpc(name: string, payload: unknown) {
       calls.push({ method: "rpc", table: name, payload });
       if (opts.supersedeError) return { data: null, error: opts.supersedeError };
-      return { data: opts.promotionResult ?? true, error: null };
+      return { data: opts.promotionResult ?? 5, error: null };
     },
     from(table: string) {
       return {
@@ -198,6 +198,9 @@ const INPUT_BASE = {
   tempBucket: "reviewstudio-temp",
   rsBaseUrl: BASE_URL,
   rsHeaders: RS_HEADERS,
+  tokenHash: "token-hash",
+  expectedRevision: 4,
+  expectedCurrentFileId: "row-old",
 };
 
 // ============================================================
@@ -225,7 +228,7 @@ test("replace: happy path returns ok with new ids and cleanup_pending undefined 
   assert(seen[1].method === "DELETE", "DELETE method");
   const insert = calls.find((call) => call.method === "insert") as any;
   assertEq(insert?.payload?.is_latest, false, "new row is staged non-current");
-  assert(calls.some((call) => call.method === "rpc" && call.table === "promote_replacement_book_file"), "transactional promotion RPC called");
+  assert(calls.some((call) => call.method === "rpc" && call.table === "promote_content_file_if_revision"), "transactional CAS promotion RPC called");
 });
 
 test("replace: concurrent promotion conflict fails without deleting old RS file", async () => {
@@ -236,6 +239,17 @@ test("replace: concurrent promotion conflict fails without deleting old RS file"
   const result = await replaceContentFile({ ...INPUT_BASE, supabase, fetchImpl });
   assertEq(result.ok, false, "promotion conflict fails");
   assertEq(seen.length, 1, "old RS file is not deleted");
+});
+
+test("replace: stale browser-observed current id is rejected before external upload", async () => {
+  const { supabase, calls } = makeSupabase();
+  const { fetchImpl, seen } = makeFetch([]);
+  const result = await replaceContentFile({ ...INPUT_BASE, expectedCurrentFileId: "row-stale", supabase, fetchImpl });
+  assertEq(result.ok, false, "stale observed identity fails");
+  if (result.ok) return;
+  assertEq(result.status, 409, "stale observed identity is a conflict");
+  assertEq(seen.length, 0, "no external upload occurs");
+  assert(!calls.some((call) => call.method === "insert"), "no staged row is inserted");
 });
 
 test("replace: no current row -> 409 with descriptive error, no RS call", async () => {
@@ -546,6 +560,11 @@ test("verifier: lone review id is indeterminate and cannot be paired with a new 
 function rowReconcileSupabase(opts: { dbWriteFails?: boolean; dbWrites?: any[] } = {}) {
   const updates: { id: string; payload: any }[] = [];
   const supabase: any = {
+    async rpc(name: string, payload: any) {
+      if (opts.dbWriteFails) return { data: null, error: { message: "db down" } };
+      updates.push({ id: String(payload.p_file_id), payload: { ...payload, rpc: name } });
+      return { data: 6, error: null };
+    },
     from(_table: string) {
       return {
         update(payload: any) {
@@ -593,11 +612,9 @@ test("reconcile: 404 -> row marked stale, is_latest=false, reconciliation_reason
   assertEq(r.marked_stale[0].id, "row-1", "marked_stale id");
   assertEq(r.marked_stale[0].reason, "externally_missing", "reason");
   assertEq(updates.length, 1, "one DB update");
-  assertEq(updates[0].payload.is_latest, false, "is_latest=false");
-  assertEq(updates[0].payload.replaced_by_file_id, undefined, "replaced_by_file_id NOT set on external deletion");
-  assert(updates[0].payload.metadata.reconciliation_reason === "externally_missing", "metadata.reconciliation_reason");
-  assert(typeof updates[0].payload.metadata.reconciled_at === "string", "metadata.reconciled_at set");
-  assertEq(updates[0].payload.metadata.foo, "bar", "preserves prior metadata");
+  assertEq(updates[0].payload.rpc, "reconcile_missing_content_file", "atomic reconciliation RPC");
+  assertEq(updates[0].payload.p_book_id, "book-1", "reconciliation remains book scoped");
+  assert(typeof updates[0].payload.p_reconciled_at === "string", "reconciled_at is recorded");
 });
 
 test("reconcile: 200 valid -> row preserved in verified, no DB update", async () => {
@@ -670,7 +687,7 @@ test("reconcile: 200 with 'not found' errors object -> missing", async () => {
   const r = await reconcileBookFiles({ rows, supabase, fetchImpl, rsBaseUrl: BASE_URL, rsHeaders: RS_HEADERS });
   assertEq(r.counts.missing, 1, "missing on deleted-error body");
   assertEq(updates.length, 1, "one update");
-  assertEq(updates[0].payload.is_latest, false, "is_latest=false");
+  assertEq(updates[0].payload.rpc, "reconcile_missing_content_file", "atomic reconciliation RPC");
 });
 
 test("reconcile: DB write fails -> indeterminate (NOT marked stale based on DB error)", async () => {

@@ -13,6 +13,21 @@ export function validateReviewMutation({ actor, round, book, item, allowAssignme
   return true
 }
 
+export function validateReviewFinalization({ actor, round, book, outcome, allowAssignmentOverride = false }: Row) {
+  if (!actor?.capabilities?.includes('can_review') || !actor?.capabilities?.includes('can_finalize_book')) throw new BasecampError(403, 'Book finalization is not authorized.')
+  if (!round || round.book_id !== book?.id) throw new BasecampError(403, 'Review finalization is not authorized.')
+  if (round.reviewer_user_id !== actor.id && !allowAssignmentOverride) throw new BasecampError(403, 'Review finalization is not assigned or authorized.')
+  const expected = outcome === 'approve_book' ? 'approved' : outcome === 'request_updates' ? 'request_updates' : null
+  if (!expected) throw new BasecampError(400, 'Review outcome is invalid.')
+  if (round.finalized_at) {
+    if (round.outcome === expected) return 'replay'
+    throw new BasecampError(409, 'Review round is immutable.')
+  }
+  if (book.latest_review_round_id !== round.id) throw new BasecampError(403, 'Review finalization is not authorized.')
+  if (!['submitted', 'in_review'].includes(String(round.status))) throw new BasecampError(409, 'Review round is immutable.')
+  return 'active'
+}
+
 export function deriveSectionState(current: unknown, threads: Row[] = []) {
   const actionable = threads.filter((thread) => thread.actionable !== false)
   if (actionable.some((thread) => !thread.resolved && !thread.deleted)) return 'needs_updates'

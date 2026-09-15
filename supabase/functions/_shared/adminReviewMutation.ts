@@ -1,5 +1,5 @@
 import { BasecampError } from './basecampClient.ts'
-import { validateReviewMutation } from './adminReviewWorkflow.ts'
+import { validateReviewFinalization, validateReviewMutation } from './adminReviewWorkflow.ts'
 
 type Row = Record<string, any>
 const ITEM_ACTIONS = new Set(['approve', 'reopen'])
@@ -11,7 +11,11 @@ export async function mutatePrivilegedAdminReview(deps: Row, input: Row) {
     const bookId = String(input?.bookId || '').trim()
     const roundId = String(input?.reviewRoundId || '').trim()
     const action = String(input?.action || '').trim()
-    if (!bookId || !roundId || !ALLOWED_ACTIONS.has(action)) throw new BasecampError(400, 'Review request is invalid.')
+    const expectedRevision = Number(input?.expectedRevision)
+    if (!bookId || !roundId || !ALLOWED_ACTIONS.has(action)
+      || input?.expectedRevision == null || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
+      throw new BasecampError(400, 'Review request is invalid.')
+    }
     const actor = await deps.resolveActor()
     const [book, round] = await Promise.all([deps.findBook(bookId), deps.findRound(roundId)])
     let item = null
@@ -21,13 +25,13 @@ export async function mutatePrivilegedAdminReview(deps: Row, input: Row) {
       item = await deps.findItem(String(input.itemId))
     }
     const assignmentOverride = FINAL_ACTIONS.has(action) && (actor.capabilities.includes('can_manage_users') || actor.capabilities.includes('can_reassign_reviewer'))
-    validateReviewMutation({ actor, round, book, item, allowAssignmentOverride: assignmentOverride })
     if (FINAL_ACTIONS.has(action)) {
-      if (!actor.capabilities.includes('can_finalize_book')) throw new BasecampError(403, 'The current user cannot finalize this book.')
-      await deps.finalizeRound({ bookId, roundId, actorId: actor.id, outcome: action })
+      validateReviewFinalization({ actor, round, book, outcome: action, allowAssignmentOverride: assignmentOverride })
+      await deps.finalizeRound({ bookId, roundId, actorId: actor.id, outcome: action, expectedRevision })
     } else {
+      validateReviewMutation({ actor, round, book, item, allowAssignmentOverride: assignmentOverride })
       await deps.applyAction({
-        bookId, roundId, actorId: actor.id, action,
+        bookId, roundId, actorId: actor.id, action, expectedRevision,
         payload: {
           item_id: input.itemId || null,
           comment_id: input.commentId || null,

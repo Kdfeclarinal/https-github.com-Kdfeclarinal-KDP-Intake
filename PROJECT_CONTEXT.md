@@ -7,7 +7,7 @@ This repository supports an internal KDP book-launch intake and admin-review wor
 The current system covers:
 
 ```text
-Employee Bookshelf / project list
+Privileged Bookshelf / Create Book
 → Details intake
 → Content intake
 → Pricing intake
@@ -31,15 +31,29 @@ This percentage is a planning estimate, not a production-readiness claim.
 
 The system is not production-ready until the remaining admin flow, finalization, external integration requirements, regression checks, and security release review are complete.
 
+## Locked Product Authority
+
+[Decisions 1–67](docs/KDP_LOCKED_DECISIONS_1_67.md) are the current locked
+product/workflow authority. Later numbered decisions and the document's
+supersession/clarification map govern where older notes differ. A review round
+may temporarily be unassigned while awaiting assignment; once assigned, exactly
+one active reviewer owns normal review mutations. Owner or a properly capable
+Tech Admin may deliberately reassign or take over. This is the approved D7/D8
+clarification, not Decision 68.
+
+The employee workflow continues to use book-scoped opaque authorization.
+Privileged Bookshelf and reviewer operations use Google authentication followed
+by a Supabase privileged-user record and server-loaded capabilities.
+
 ---
 
 ## Current Architecture
 
 ### Frontend / Operational Surface
 
-GoHighLevel currently hosts the employee and admin intake/review pages.
-
-The current implementation uses a mixture of:
+React is the application workflow UI direction for Bookshelf, employee intake,
+and Admin Review. The locally verified React/Vite shell is intended to run in
+the existing GoHighLevel-hosted surface. Legacy GHL pages and their mixture of:
 
 - native GHL page elements
 - custom HTML/CSS/JavaScript
@@ -47,7 +61,8 @@ The current implementation uses a mixture of:
 - custom review controls
 - GHL page navigation
 
-The existing implementation is selector-heavy and has accumulated page-specific hydration/DOM behavior. It remains valuable as a working behavioral reference.
+remain present during the staged cutover and are valuable as behavioral
+references. They are not the direction for new workflow UI work.
 
 ### Source of Truth
 
@@ -68,6 +83,11 @@ Supabase is the canonical backend source of truth for:
 - Used for manuscript/cover review files and review links.
 - Flow is Client → Project → Review → Review File.
 - Privileged ReviewStudio API operations belong on the server/Edge Function side.
+- Under Decisions 45–46, a genuine later asset replacement must become a native
+  V2/V3/etc. version in the same logical ReviewStudio review, and each KDP review
+  round must map to the exact ReviewStudio version it reviewed. The current
+  delete-and-replace implementation is historical behavior and this native
+  versioning contract is not implemented yet.
 
 **GoHighLevel**
 - Current page/funnel/CRM surface.
@@ -154,7 +174,11 @@ Repository/database state must be checked before relying on exact grants or impl
 
 ## Access / Authorization Model
 
-The current project uses scoped opaque access tokens rather than Supabase Auth as its primary page-access model.
+The project deliberately uses separate authorization models. Employee intake
+uses scoped opaque book tokens. Privileged Bookshelf and Admin Review use a
+Google-authenticated Supabase session followed by an active privileged-user
+record and server-loaded capabilities. Authentication alone authorizes neither
+model.
 
 Current pattern:
 
@@ -166,45 +190,53 @@ raw access token in authorized browser flow
 → server-authorized operation
 ```
 
-Known token categories:
+Known employee token categories:
 
-### Employee Bookshelf token
+### Historical employee Bookshelf token — superseded product path
 
-- employee-scoped entry/access token
-- not necessarily tied to one book
-- used to access/open the employee Bookshelf and transition into a book-specific workflow
+- Older code may still contain an employee-scoped Bookshelf token during the
+  staged cutover.
+- It is not part of the locked product path: the React Bookshelf is privileged
+  only, and employees enter through a secure book-scoped launcher/deep link.
 
 ### Book-specific employee token
 
 - tied to a specific book
 - used across employee Details / Content / Pricing as allowed by token permissions
 
-### Admin review token
+### Historical admin review token — legacy compatibility
 
 - role: admin
 - tied to a specific `book_id`
 - tied to a specific `review_round_id`
 - expected to carry allowed admin pages/actions
-- used across Admin Details / Content / Pricing for that review round
+- retained only for legacy compatibility during the staged cutover; the React
+  Admin Review authority is the privileged Google/Supabase capability model
 
-Do not replace this model with Supabase Auth or another auth design without explicit architecture approval.
+Do not replace employee opaque-token authorization with Supabase Auth, and do
+not treat a privileged Supabase session as sufficient without capability and
+resource authorization.
 
 ---
 
 # Current Functional Progress
 
-## Employee Bookshelf
+## Privileged Bookshelf
 
-Status: **VERIFIED / substantially working**
+Status: **IMPLEMENTED AND LOCALLY VERIFIED / NOT ACTIVATED**
 
 Known behavior:
 
-- secure employee Bookshelf exists
-- Bookshelf access can lead into a book-specific employee intake context
-- return URL/session behavior has been implemented
-- Supabase-backed project/book state is used
+- Google/Supabase authentication establishes identity, followed by an active
+  privileged-user profile and server-loaded capabilities
+- authorized cards use canonical Supabase book/workflow data
+- privileged users can enter assigned/observable Admin Review or Create Book
+  according to capability
+- employees do not use this Bookshelf and instead enter a specific book through
+  a secure book-scoped launcher/deep link
 
-Do not assume every legacy Bookshelf edge case has been regression-tested recently.
+Live use still requires the pending migrations, Edge Functions, provider/runtime
+configuration, privileged bootstrap records, and hosted smoke testing.
 
 ---
 
@@ -423,6 +455,10 @@ active assigned reviewer may approve/reopen sections, create or manage comments,
 approve eligible pending sections on the current page, and durably reach later
 review pages only after prior required pages are decided. Finalized rounds and
 their submitted snapshots remain immutable and may be loaded as history.
+Employee Updates replies and readiness evidence live in separate continuation
+state and are linked forward on resubmission without changing the finalized round.
+A round may be temporarily unassigned; normal review mutation authority begins
+only after exactly one eligible reviewer is assigned.
 
 Whole-book Request Updates requires no pending review sections and at least one
 requested-change section. Approve Book requires every required section approved
@@ -442,6 +478,13 @@ task. Reconciliation markers and unique reference keys prevent task reuse or
 duplication. Finalized-outcome failures are exposed as sanitized Bookshelf state
 with a separately authorized retry; they never roll back canonical KDP state.
 
+The current post-`299da454` local work preserves two additional verified rules:
+Round 1 Admin Review derives from Employee Intake, while Round 2+ derives from
+the preceding Employee Updates task and fails closed when that mapping is
+missing. Reopen Decision is accepted only for an Approved section; Changes
+Requested cannot be reopened, and resolving/deleting its final actionable issue
+returns the section to Pending rather than Approved.
+
 This remains Stage A. Legacy status aliases/readers/writers and all legacy GHL
 pages are retained until migrations/functions/configuration are activated and a
 real employee → reviewer → updates/resubmit → approval smoke test passes.
@@ -460,8 +503,8 @@ Known working behavior:
 - statuses: pending / approved / needs_updates
 - comments optional
 - pending decisions block Save & Continue
-- bulk Approve All / Update All behavior implemented
-- page-level admin save persists reviewer metadata/comments/decisions
+- current-page-only Approve All is implemented; there is no Update All
+- React reviewer mutations persist immediately and reload authoritative state
 - secure navigation from Admin Details → Admin Content preserves required review context
 
 Current important legacy GHL controller/mount identifiers include:
@@ -584,6 +627,19 @@ Supabase stores ReviewStudio IDs/URLs/metadata needed by the workflow.
 
 Browser-visible review/preview URLs may be returned when safe, but ReviewStudio API credentials remain server-only.
 
+Decisions 45–46 supersede the current simple external delete-and-replace model
+for genuine later manuscript or cover replacements. The durable target is:
+
+```text
+same logical ReviewStudio review
+→ native ReviewStudio V2/V3/etc. version
+→ exact version reference frozen into the applicable KDP review round
+```
+
+KDP round numbers and ReviewStudio version numbers remain independent. This is
+a locked target, not a claim that the current upload implementation already
+provides native version history.
+
 Cover/manuscript UI must not expose employee upload/replace controls to admins unless explicitly permitted by the workflow.
 
 ---
@@ -702,6 +758,17 @@ Do not install dependencies or build the POC until the reconnaissance report is 
 
 - The React workflow completion foundation is locally verified but its migrations
   and Edge Functions are not deployed; no hosted end-to-end outcome is claimed.
+- Decisions 58/63/67 are implemented locally: finalized review rounds remain
+  immutable, Employee Updates use separate continuation state, resubmission
+  links that context into the next review round, and finalized history is
+  rendered read-only.
+- Settings for Team & Permissions, Review Defaults, and Integrations; deliberate
+  employee/reviewer reassignment; Trash/Recover; reviewer-ineligibility handling;
+  Owner-safety controls remain gaps. Reviewer and employee optimistic concurrency,
+  including observed current-file identity, is implemented locally but not activated.
+- ReviewStudio native version history/round mapping, author identity sync,
+  post-approval correction, KDP Upload Assistant/handoff, complete AI disclosure,
+  terminal confirmations, and final review/history fidelity remain incomplete.
 - The new SQL migration has static/harness coverage but still requires an
   execution dry-run against a schema-compatible PostgreSQL/Supabase environment.
 - DRM legacy submissions may be blank because old employee validation did not require a choice.

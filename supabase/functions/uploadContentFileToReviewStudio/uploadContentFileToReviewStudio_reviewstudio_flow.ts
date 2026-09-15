@@ -285,6 +285,7 @@ async function getBook(supabase: any, bookId: string, token: any) {
         "employee_name",
         "overall_status",
         "latest_review_round_id",
+        "employee_revision",
         "deleted_at",
       ].join(","),
     )
@@ -642,7 +643,7 @@ async function saveBookFile(supabase: any, payload: any) {
     uploaded_by_name: payload.uploadedByName || null,
     uploaded_by_email: payload.uploadedByEmail || null,
     uploaded_at: nowIso,
-    is_latest: true,
+    is_latest: false,
     metadata: {
       review_kind: payload.fileType,
       review_name: payload.reviewName,
@@ -651,28 +652,6 @@ async function saveBookFile(supabase: any, payload: any) {
       uploaded_at: nowIso,
     },
   };
-
-  const existing = await supabase
-    .from("book_files")
-    .select("id")
-    .eq("book_id", payload.bookId)
-    .eq("file_type", payload.fileType)
-    .eq("section_key", sectionKey)
-    .limit(1);
-
-  if (existing.error) throw new Error(existing.error.message);
-
-  if (existing.data?.length) {
-    const { data, error } = await supabase
-      .from("book_files")
-      .update(record)
-      .eq("id", existing.data[0].id)
-      .select("*")
-      .single();
-
-    if (error) throw new Error(error.message);
-    return data;
-  }
 
   const { data, error } = await supabase
     .from("book_files")
@@ -711,9 +690,14 @@ Deno.serve(async function (request) {
       .trim()
       .toLowerCase();
     const file = form.get("file");
+    const expectedRevisionValue = form.get("expected_revision");
+    const expectedRevision = Number(expectedRevisionValue);
+    const observedCurrentFile = String(form.get("observed_current_file_id") || "").trim();
 
     if (!bookId) throw new AppError(400, "Missing book_id.");
     if (!accessToken) throw new AppError(400, "Missing access_token.");
+    if (expectedRevisionValue === null || !Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new AppError(400, "Missing or invalid expected_revision.");
+    if (observedCurrentFile !== "none") validateUuid(observedCurrentFile, "observed_current_file_id");
 
     validateUuid(bookId, "book_id");
 
@@ -732,6 +716,7 @@ Deno.serve(async function (request) {
      */
     const token = await getToken(supabase, accessToken, bookId);
     const book = await getBook(supabase, bookId, token);
+    const tokenHash = await hashToken(accessToken);
 
     if (["needs_updates", "EMPLOYEE_UPDATES"].includes(String(book.overall_status))) {
       const { data: requestedFiles, error: requestedFilesError } = await supabase
@@ -788,6 +773,11 @@ Deno.serve(async function (request) {
       );
     }
 
+    const authoritativeCurrentId = currentRow?.id ? String(currentRow.id) : "none";
+    if (Number(book.employee_revision) !== expectedRevision || authoritativeCurrentId !== observedCurrentFile) {
+      throw new AppError(409, "This book or file changed elsewhere. Reload and try again.");
+    }
+
     if (currentRow && currentRow.reviewstudio_review_id && currentRow.reviewstudio_file_id) {
       const replaceResult = await replaceContentFile({
         bookId,
@@ -800,6 +790,9 @@ Deno.serve(async function (request) {
         rsBaseUrl: env("REVIEWSTUDIO_API_BASE_URL"),
         rsHeaders: rsHeaders(),
         safeFileName,
+        tokenHash,
+        expectedRevision,
+        expectedCurrentFileId: observedCurrentFile,
       });
 
       if (!replaceResult.ok) {
@@ -934,6 +927,31 @@ Deno.serve(async function (request) {
       uploadedByEmail: token.employee_email || book.employee_email || null,
     });
 
+    const { data: promotedRevision, error: promotionError } = await supabase.rpc(
+      "promote_content_file_if_revision",
+      {
+        p_book_id: bookId,
+        p_token_hash: tokenHash,
+        p_expected_revision: expectedRevision,
+        p_file_type: fileType,
+        p_section_key: sectionKey,
+        p_expected_old_file_id: currentRow?.id || null,
+        p_new_file_id: savedFile.id,
+      },
+    );
+    if (promotionError) {
+      await finishIntegrationEvent(supabase, integrationEventId, "failed", {
+        phase: "canonical_promotion",
+        staged_book_file_id: savedFile.id,
+        reviewstudio_review_id: reviewId,
+        reviewstudio_file_id: reviewFile.id,
+        reconciliation_required: true,
+      }, "stale_or_failed_canonical_promotion");
+      integrationEventId = "";
+      if (promotionError.code === "40001") throw new AppError(409, "This book or file changed elsewhere. Reload and try again.");
+      throw new Error(promotionError.message);
+    }
+
     await finishIntegrationEvent(
       supabase,
       integrationEventId,
@@ -944,6 +962,7 @@ Deno.serve(async function (request) {
         reviewstudio_review_id: reviewId,
         reviewstudio_file_id: reviewFile.id,
         processing_status: reviewFile.processingStatus,
+        employee_revision: Number(promotedRevision),
         book_file_id: savedFile.id,
       },
     );
