@@ -837,6 +837,34 @@ persisted server state instead of a browser-supplied Pricing snapshot. Basecamp
 lifecycle failure is operational only and cannot undo or authorize the canonical
 KDP transition.
 
+Privileged operational administration is locally implemented through the existing
+Google/Supabase allowlist and capability-grant model. Service-role-only transactional
+RPCs enforce Owner creation/demotion boundaries, retain at least one active Owner with
+user-management authority, reject stale revisions, invalidate ineligible reviewer
+ownership without changing workflow state, and audit administrative mutations.
+Employee reassignment revokes prior opaque access and commits canonical continuity
+before a retryable Basecamp update. Replacement access preserves only the actions legal
+for the current workflow state. Integration responses expose configuration status,
+never credential material, and Basecamp success is not reported unless the durable
+event state is persisted. Tech Admin delegation is limited server-side to an explicit
+non-Owner subset, self-administration is denied, same-target reviewer overrides require
+authority and fail without mutation, and the eligible Owner submission fallback is
+delivered by a forward migration. Review navigation cannot start review; the first
+meaningful reviewer mutation atomically records the original start attribution. This
+slice is locally verified but is not hosted or production-activated. Initial activation
+uses a single-use, service-role-only bootstrap transaction for one explicit existing
+Google identity, only while no valid active Owner exists; it grants the current
+capability registry and records an audit event without hard-coded identity data.
+Employee-access recovery derives the opaque credential from a stable server-generated
+integration-event ID, persists only its hash and prefix, and reuses that identity for
+retryable delivery to the existing mapped Basecamp task. The privileged response never
+contains the credential, and access is not reported as reestablished until downstream
+delivery and durable event settlement both succeed. Per-book claim/settlement CAS and
+a one-in-flight database invariant prevent stale recovery or reassignment workers from
+overwriting the current employee launcher. During a controlled derivation-secret
+rotation, the optional previous server-only secret may be retained temporarily so an
+already-persisted access identity remains reconstructable until its delivery settles.
+
 For security-sensitive API requests:
 
 - validate request method, shape, IDs, sizes, and allowed values server-side

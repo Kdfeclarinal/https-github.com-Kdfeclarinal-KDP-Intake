@@ -325,18 +325,26 @@ Deno.serve(async (request) => {
         .eq("book_id", bookId).maybeSingle();
       if (round?.finalized_at && round.outcome === "request_updates") {
         const [{ data: updateItems }, { data: updateComments }, { data: updateCycle }] = await Promise.all([
-          supabase.from("book_review_items").select("id,step_name,section_key,decision").eq("review_round_id", round.id),
+          supabase.from("book_review_items").select("id,step_name,section_key,section_label,decision").eq("review_round_id", round.id),
           supabase.from("book_review_comments").select("id,review_item_id,parent_comment_id,body,comment_text,round_comment_number,actionable,created_at,deleted_at").eq("review_round_id", round.id).is("deleted_at", null),
           supabase.from("book_review_update_cycles").select("id,status").eq("source_review_round_id", round.id).eq("book_id", bookId).maybeSingle(),
         ]);
         let updateThreads: JsonObject[] = [];
         let updateReplies: JsonObject[] = [];
+        let updateReopens: JsonObject[] = [];
         if (updateCycle?.id && updateCycle.status === "active") {
-          const { data: threadRows, error: threadError } = await supabase.from("book_review_update_threads")
-            .select("id,source_item_id,source_comment_id,step_name,section_key,request_body_snapshot,request_number_snapshot,requested_at,baseline_value,baseline_file_references,status")
-            .eq("update_cycle_id", updateCycle.id).eq("step_name", stepName).eq("status", "active");
+          const [{ data: threadRows, error: threadError }, { data: reopenRows, error: reopenError }] = await Promise.all([
+            supabase.from("book_review_update_threads")
+              .select("id,source_item_id,source_comment_id,step_name,section_key,request_body_snapshot,request_number_snapshot,requested_at,baseline_value,baseline_file_references,status")
+              .eq("update_cycle_id", updateCycle.id).eq("step_name", stepName).eq("status", "active"),
+            supabase.from("book_review_update_reopens")
+              .select("id,source_item_id,step_name,section_key,reason,reopened_at")
+              .eq("update_cycle_id", updateCycle.id).eq("step_name", stepName),
+          ]);
           if (threadError) throw threadError;
+          if (reopenError) throw reopenError;
           updateThreads = threadRows || [];
+          updateReopens = reopenRows || [];
           const threadIds = updateThreads.map((thread) => String(thread.id || "")).filter(Boolean);
           if (threadIds.length) {
             const { data: replyRows, error: replyError } = await supabase.from("book_review_update_replies")
@@ -353,6 +361,7 @@ Deno.serve(async (request) => {
           comments: updateComments || [],
           threads: updateThreads,
           replies: updateReplies,
+          reopens: updateReopens,
           currentSections: asObject(stepRow?.state_json).sections || {},
           currentFiles: verifiedRows,
         });

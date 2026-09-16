@@ -29,6 +29,7 @@ export const BOOKSHELF_VIEWS = [
   { value: 'all', label: 'All titles' },
   { value: 'active', label: 'Active titles' },
   { value: 'archived', label: 'Archived titles' },
+  { value: 'trash', label: 'Trash' },
 ];
 
 function key(value) {
@@ -67,7 +68,10 @@ export function filterAndSortBooks(books, options = {}) {
 
   const result = (Array.isArray(books) ? books : []).filter((book) => {
     const status = book.status || book.overall_status;
-    if (view === 'active' && (belongsTo(status, 'archived') || belongsTo(status, 'deleted'))) return false;
+    const deleted = Boolean(book.deletedAt || book.deleted_at) || belongsTo(status, 'deleted');
+    if (view === 'trash') return deleted && (!query || `${titleOf(book)} ${authorOf(book)}`.toLocaleLowerCase().includes(query));
+    if (deleted) return false;
+    if (view === 'active' && belongsTo(status, 'archived')) return false;
     if (view === 'archived' && !belongsTo(status, 'archived')) return false;
     if (filter !== 'all' && !belongsTo(status, filter)) return false;
     return !query || `${titleOf(book)} ${authorOf(book)}`.toLocaleLowerCase().includes(query);
@@ -80,6 +84,21 @@ export function filterAndSortBooks(books, options = {}) {
     if (sort === 'oldest') return createdOf(a) - createdOf(b);
     return updatedOf(b) - updatedOf(a);
   });
+}
+
+export function deriveBookAttention(book = {}, policy = {}, now = Date.now()) {
+  const status = key(book.status || book.overall_status);
+  const employeeUpdates = STATUS_GROUPS.needs_update.has(status);
+  const activeReview = STATUS_GROUPS.for_approval.has(status) || STATUS_GROUPS.in_review.has(status);
+  if (!employeeUpdates && !activeReview) return null;
+  const dueHours = Number(employeeUpdates ? policy.employeeUpdatesDueHours : policy.reviewDueHours);
+  const escalationHours = Number(employeeUpdates ? policy.employeeUpdatesEscalationHours : policy.reviewEscalationHours);
+  const since = book.attentionStartedAt || book.attention_started_at;
+  const started = Date.parse(since || '');
+  if (!Number.isFinite(started) || !Number.isFinite(dueHours) || dueHours <= 0) return null;
+  const elapsedHours = (Number(now) - started) / 3_600_000;
+  if (elapsedHours < dueHours) return null;
+  return { state: Number.isFinite(escalationHours) && escalationHours > dueHours && elapsedHours >= escalationHours ? 'escalated' : 'overdue', since };
 }
 
 export function bookshelfBookView(book) {
@@ -97,10 +116,27 @@ export function bookshelfBookView(book) {
     coverUrl: book.coverUrl || book.cover_url || null,
     intakeUrl: book.intakeUrl || book.intake_url || null,
     reviewAvailable: book.reviewAvailable === true,
+    activeReview: book.activeReview === true,
+    reviewerId: book.reviewerId || null,
+    reviewerEligible: book.reviewerEligible === true,
+    reviewRevision: Number(book.reviewRevision) || 0,
+    reviewerAssignmentRevision: Number(book.reviewerAssignmentRevision) || 0,
+    employeePersonId: book.employeePersonId || null,
+    employeeName: book.employeeName || '',
+    reviewerName: book.reviewerName || '',
+    employeeRevision: Number(book.employeeRevision) || 0,
+    latestFiles: (Array.isArray(book.latestFiles) ? book.latestFiles : []).map((file) => ({
+      fileType: String(file.fileType || ''), fileName: String(file.fileName || ''), url: String(file.url || ''),
+    })).filter((file) => file.fileName),
+    deletedAt: book.deletedAt || null,
+    deletedBy: book.deletedBy || '',
+    trashRevision: Number(book.trashRevision) || 0,
+    attention: book.attention || null,
     basecamp: {
       status: basecampStatus,
       retryAvailable: basecampStatus !== 'ready' && book.basecamp?.retryAvailable === true,
-      retryKind: ['review_round', 'review_outcome'].includes(book.basecamp?.retryKind) ? book.basecamp.retryKind : 'book_setup',
+      retryKind: ['review_round', 'review_outcome', 'employee_reassignment'].includes(book.basecamp?.retryKind) ? book.basecamp.retryKind : 'book_setup',
+      ...(book.basecamp?.operatorIntervention === true ? { operatorIntervention: true } : {}),
     },
   };
 }

@@ -6,7 +6,7 @@ import { syncBasecampReviewOutcome } from '../functions/_shared/basecampOutcomeL
 test('request updates completes the review task and creates one assigned employee task', async () => {
   const calls = [];
   const result = await syncBasecampReviewOutcome({
-    outcome: 'request_updates', round: { id: 'round-1', roundNumber: 1 }, employeePersonId: '42',
+    outcome: 'request_updates', round: { id: 'round-1', roundNumber: 1 }, employeePersonId: '42', reviewerName: 'Rae Reviewer', requestedSections: ['Book Title', 'Kindle eBook Cover'],
     reviewTodo: { id: 'review-task', completed: false }, existingEmployeeTodo: null,
     completeTodo: async () => calls.push('complete'),
     createEmployeeTodo: async (payload) => { calls.push(payload); return { id: 'employee-task' }; },
@@ -15,6 +15,11 @@ test('request updates completes the review task and creates one assigned employe
   assert.equal(result.status, 'ready');
   assert.deepEqual(calls[1].assignee_ids, [42]);
   assert.equal(calls[1].content, 'Employee Updates — Round 1');
+  assert.match(calls[1].description, /Reviewer:<\/strong> Rae Reviewer/);
+  assert.match(calls[1].description, /2 sections require updates/);
+  assert.match(calls[1].description, /Book Title/);
+  assert.match(calls[1].description, /Open the existing Employee Intake link/);
+  assert.doesNotMatch(calls[1].description, /private comment body/);
 });
 
 test('request updates fails safely instead of creating an unassigned employee task', async () => {

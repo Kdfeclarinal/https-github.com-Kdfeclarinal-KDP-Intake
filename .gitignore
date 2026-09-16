@@ -3,3 +3,6 @@ node_modules/
 
 # Playwright MCP working dir (test artifacts from browser verification)
 .playwright-mcp/
+
+# Generated immutable frontend release tree (built from tracked dist artifacts)
+poc/kdp-app-shell/static/

@@ -56,7 +56,9 @@ function sanitizeContinuation(row: Row) {
   }
 }
 
-function sanitizeComment(row: Row, continuations: Map<string, Row>) {
+function sanitizeComment(row: Row, continuations: Map<string, Row>, actorId: string, canMutate: boolean) {
+  const ownsComment = row.author_privileged_user_id === actorId
+  const isRoot = !row.parent_comment_id
   return {
     id: row.id,
     itemId: row.review_item_id || null,
@@ -71,6 +73,12 @@ function sanitizeComment(row: Row, continuations: Map<string, Row>) {
     editedAt: row.edited_at || null,
     authorActorType: row.author_actor_type || 'privileged',
     continuation: continuations.has(row.id) ? sanitizeContinuation(continuations.get(row.id)) : null,
+    permissions: {
+      canReply: canMutate && isRoot,
+      canEdit: canMutate && ownsComment,
+      canResolve: canMutate && isRoot && row.actionable === true && !row.resolved_at,
+      canDelete: canMutate && ownsComment,
+    },
     persisted: true,
   }
 }
@@ -82,6 +90,9 @@ function sanitizeFiles(round: Row) {
     const result: Row = { fileName: String(file.file_name || '') }
     if (file.file_type || file.section_key) result.fileType = String(file.file_type || file.section_key)
     if (Number(file.version_number)) result.versionNumber = Number(file.version_number)
+    if (file.mime_type) result.mimeType = String(file.mime_type)
+    if (Number.isFinite(Number(file.file_size_bytes))) result.fileSizeBytes = Number(file.file_size_bytes)
+    if (file.created_at) result.createdAt = file.created_at
     return result
   }).filter((file: Row) => file.fileName)
 }
@@ -132,10 +143,11 @@ export async function resolvePrivilegedAdminReview(deps: Row, bookId: unknown, r
           finalizedAt: round.finalized_at || null,
           finalizedBy: round.finalized_by_name || null,
           reviewer: round.reviewer_name_snapshot || null,
+          snapshotIdentity: `round-${Number(round.round_number) || 1}-schema-${Number(round.submission_snapshot?.schema_version) || 1}`,
           reachedSteps: round.reached_steps || ['details'],
         },
         items: (items || []).filter((row: Row) => row.is_reviewable !== false).map(sanitizeItem).sort((a: Row, b: Row) => a.sortOrder - b.sortOrder),
-        comments: (comments || []).map((row: Row) => sanitizeComment(row, continuations)),
+        comments: (comments || []).map((row: Row) => sanitizeComment(row, continuations, actor.id, canMutate)),
         files: sanitizeFiles(round),
         roundHistory: (rounds || []).map((entry: Row) => ({ id: entry.id, roundNumber: Number(entry.round_number) || 1, status: entry.status, outcome: entry.outcome || null, finalizedAt: entry.finalized_at || null })),
         permissions: { canMutate, canFinalize: isLatest && !round.finalized_at && actor.capabilities.includes('can_finalize_book') && (canObserveAssigned || actor.capabilities.includes('can_reassign_reviewer') || actor.capabilities.includes('can_manage_users')) },

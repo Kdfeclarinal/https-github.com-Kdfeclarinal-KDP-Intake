@@ -726,7 +726,14 @@ Deno.serve(async function (request) {
         .eq("step_name", "content")
         .eq("decision", "needs_updates");
       if (requestedFilesError) throw new Error(requestedFilesError.message);
-      assertEmployeeUpdateFileSection(book.overall_status, (requestedFiles || []).map((row) => String(row.section_key)), fileType);
+      const { data: reopenedFiles, error: reopenedFilesError } = await supabase
+        .from("book_review_update_reopens")
+        .select("section_key")
+        .eq("book_id", bookId)
+        .eq("source_review_round_id", book.latest_review_round_id)
+        .eq("step_name", "content");
+      if (reopenedFilesError) throw new Error(reopenedFilesError.message);
+      assertEmployeeUpdateFileSection(book.overall_status, [...new Set([...(requestedFiles || []), ...(reopenedFiles || [])].map((row) => String(row.section_key)))], fileType);
     }
 
     if (!(file instanceof File)) {

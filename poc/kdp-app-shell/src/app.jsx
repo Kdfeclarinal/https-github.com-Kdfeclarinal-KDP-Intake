@@ -10,6 +10,7 @@ import { CreateNewPage } from './bookshelf/CreateNewPage.jsx';
 import { PrivilegedGate } from './privileged/PrivilegedGate.jsx';
 import { AdminReviewGate } from './adminReview/AdminReviewGate.jsx';
 import { EmployeeUpdateContext, EmployeeUpdateNotice } from './employeeUpdates/EmployeeUpdateNotice.jsx';
+import { SettingsPage } from './settings/SettingsPage.jsx';
 
 // Stage B1: ONE protected employee read via the existing loadEmployeePage Edge Function.
 // READ ONLY. No write, no storage, no new dependency.
@@ -236,12 +237,13 @@ function App() {
     setView('admin-review');
   };
 
-  if (view === 'bookshelf' || view === 'create-new' || view === 'admin-review') {
-    return React.createElement(PrivilegedGate, null, (context, onSignOut, privilegedApi) => view === 'bookshelf'
+  if (view === 'bookshelf' || view === 'create-new' || view === 'admin-review' || view === 'settings') {
+    return React.createElement(PrivilegedGate, { contextFunction: view === 'settings' ? 'loadOperationalSettings' : 'loadPrivilegedBookshelf' }, (context, onSignOut, privilegedApi) => view === 'bookshelf'
       ? React.createElement(BookshelfPage, {
           books: context.books,
           identity: context.identity,
           canCreateBook: context.canCreateBook,
+          capabilities: context.capabilities,
           onSignOut,
           onNavigate: navigateView,
           onOpenReview: openAdminReview,
@@ -255,11 +257,11 @@ function App() {
           privilegedApi,
           onCreated: async () => { await privilegedApi.refresh(); navigateView('bookshelf'); },
         })
-      : React.createElement(AdminReviewGate, {
+      : view === 'admin-review' ? React.createElement(AdminReviewGate, {
           privilegedApi,
           onBackToBookshelf: () => navigateView('bookshelf'),
           onSignOut,
-        }));
+        }) : React.createElement(SettingsPage, { context, privilegedApi, onNavigate: navigateView, onSignOut }));
   }
   return React.createElement(ProtectedReadGate);
 }

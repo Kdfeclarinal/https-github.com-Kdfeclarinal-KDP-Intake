@@ -10,7 +10,8 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   status,
   headers: { ...CORS, 'Content-Type': 'application/json' },
 })
-const BOOK_FIELDS = 'id,book_title,primary_author_name,overall_status,updated_at,created_at,assigned_reviewer_user_id,latest_review_round_id,deleted_at,basecamp_references(reference_kind,review_round_id,provisioning_status)'
+const BOOK_FIELDS = 'id,book_title,primary_author_name,overall_status,updated_at,created_at,assigned_reviewer_user_id,reviewer_assignment_revision,latest_review_round_id,employee_basecamp_person_id,employee_name,employee_revision,deleted_at,deleted_by_privileged_user_id,trash_revision,basecamp_references(reference_kind,review_round_id,provisioning_status),integration_events(event_type,status,created_at)'
+const positiveHours = (value: string | undefined) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? number : null }
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return json({ ok: true })
@@ -41,7 +42,7 @@ Deno.serve(async (request) => {
         return data || []
       },
       listAllBooks: async () => {
-        const { data, error } = await supabase.from('books').select(BOOK_FIELDS).is('deleted_at', null)
+        const { data, error } = await supabase.from('books').select(BOOK_FIELDS)
         if (error) throw error
         return data || []
       },
@@ -57,10 +58,45 @@ Deno.serve(async (request) => {
         if (error) throw error
         return [...new Set((data || []).map((row) => row.book_id).filter(Boolean))]
       },
+      listUnassignedActiveBookIds: async () => {
+        const { data, error } = await supabase.from('book_review_rounds').select('book_id')
+          .is('reviewer_user_id', null).in('status', ['submitted', 'in_review']).is('finalized_at', null)
+        if (error) throw error
+        return [...new Set((data || []).map((row) => row.book_id).filter(Boolean))]
+      },
       listBooksByIds: async (ids: string[]) => {
         const { data, error } = await supabase.from('books').select(BOOK_FIELDS).in('id', ids).is('deleted_at', null)
         if (error) throw error
         return data || []
+      },
+      listActiveRounds: async (ids: string[]) => {
+        if (!ids.length) return []
+        const { data, error } = await supabase.from('book_review_rounds').select('id,reviewer_user_id,reviewer_name_snapshot,revision,status,submitted_at,started_at,employee_updates_started_at,finalized_at').in('id', ids)
+        if (error) throw error
+        return data || []
+      },
+      listEligibleReviewerIds: async () => {
+        const { data: grants, error } = await supabase.from('privileged_user_capability_grants').select('privileged_user_id,privileged_users!inner(disabled_at)').eq('capability_key','can_review').is('revoked_at',null).is('privileged_users.disabled_at',null)
+        if (error) throw error
+        return [...new Set((grants || []).map((row) => row.privileged_user_id))]
+      },
+      listReviewerProfiles: async (ids: string[]) => {
+        if (!ids.length) return []
+        const { data, error } = await supabase.from('privileged_users').select('id,display_name').in('id', ids)
+        if (error) throw error
+        return data || []
+      },
+      listLatestFiles: async (bookIds: string[]) => {
+        if (!bookIds.length) return []
+        const { data, error } = await supabase.from('book_files').select('book_id,file_type,file_name,reviewstudio_file_url,download_url,updated_at').in('book_id', bookIds).eq('is_latest', true)
+        if (error) throw error
+        return data || []
+      },
+      attentionPolicy: {
+        reviewDueHours: positiveHours(Deno.env.get('KDP_REVIEW_DUE_HOURS')),
+        reviewEscalationHours: positiveHours(Deno.env.get('KDP_REVIEW_ESCALATION_HOURS')),
+        employeeUpdatesDueHours: positiveHours(Deno.env.get('KDP_EMPLOYEE_UPDATES_DUE_HOURS')),
+        employeeUpdatesEscalationHours: positiveHours(Deno.env.get('KDP_EMPLOYEE_UPDATES_ESCALATION_HOURS')),
       },
     })
     return json(result.body, result.status)

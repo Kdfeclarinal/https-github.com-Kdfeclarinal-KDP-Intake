@@ -30,6 +30,11 @@ const base = {
   listDirectAssignedBooks: async () => [book('direct', 'priv-1')],
   listRoundBookIds: async () => ['round'],
   listBooksByIds: async () => [book('round')],
+  listActiveRounds: async () => [{ id: 'round-current', reviewer_user_id: 'priv-1', revision: 2, status: 'in_review', submitted_at: '2026-09-12T12:00:00Z' }],
+  listReviewerProfiles: async () => [{ id: 'priv-1', display_name: 'Rae Reviewer' }],
+  listLatestFiles: async () => [{ book_id: 'direct', file_type: 'manuscript', file_name: 'draft.docx', reviewstudio_file_url: 'https://review.example/draft' }],
+  attentionPolicy: { reviewDueHours: 24, reviewEscalationHours: 72, employeeUpdatesDueHours: 48, employeeUpdatesEscalationHours: 96 },
+  now: Date.parse('2026-09-16T12:00:00Z'),
 }
 
 async function run() {
@@ -70,10 +75,30 @@ async function run() {
   assert(result.status === 200 && result.body.books.length === 0, 'create-only user may enter Bookshelf but receives no unauthorized books')
   assert(result.body.canCreateBook === true, 'create capability is exposed only as presentation context')
 
+  result = await resolvePrivilegedBookshelf({
+    ...base,
+    listGrants: async () => [{ capability_key: 'can_review', revoked_at: null }, { capability_key: 'can_claim_review', revoked_at: null }],
+    listUnassignedActiveBookIds: async () => ['claimable'],
+    listBooksByIds: async (ids: string[]) => ids.map((id) => book(id)),
+  })
+  assert(result.status === 200 && result.body.books.some((item: { id: string }) => item.id === 'claimable'), 'claim-capable reviewer sees the unassigned active review queue')
+
   const safe = sanitizeBook(book('safe'))
-  assert(Object.keys(safe).sort().join(',') === 'author,basecamp,createdAt,id,reviewAvailable,status,title,type,updatedAt', 'book projection is data-minimal')
+  assert(Object.keys(safe).sort().join(',') === 'activeReview,attention,author,basecamp,createdAt,deletedAt,deletedBy,employeeName,employeePersonId,employeeRevision,id,latestFiles,reviewAvailable,reviewRevision,reviewerAssignmentRevision,reviewerEligible,reviewerId,reviewerName,status,title,trashRevision,type,updatedAt', 'book projection includes only presentation and operational-control fields')
   assert(safe.basecamp.status === 'failed' && safe.basecamp.retryAvailable === true, 'failed Basecamp provisioning exposes only retry-safe state')
   assert(!JSON.stringify(safe).includes('private-detail'), 'Basecamp internal errors are not returned')
+
+  const reassignmentWarning = sanitizeBook({ ...book('employee-sync'), integration_events: [
+    { event_type: 'employee_reassignment_requested', status: 'failed', created_at: '2026-09-17T00:00:00Z', payload_json: { token: 'never-return' } },
+  ] })
+  assert(reassignmentWarning.basecamp.status === 'failed' && reassignmentWarning.basecamp.retryKind === 'employee_reassignment', 'failed employee reassignment is exposed as a sanitized retry state')
+  assert(!JSON.stringify(reassignmentWarning).includes('never-return'), 'integration event payload is never returned')
+
+  const recoveryWarning = sanitizeBook({ ...book('employee-recovery'), integration_events: [
+    { event_type: 'employee_access_recovery_requested', status: 'failed', created_at: '2026-09-17T00:00:00Z' },
+  ] })
+  assert(recoveryWarning.basecamp.status === 'failed' && recoveryWarning.basecamp.retryAvailable === true, 'failed employee access recovery remains retryable')
+  assert(recoveryWarning.basecamp.retryKind === 'employee_reassignment', 'employee access recovery reuses the deterministic employee sync retry boundary')
 
   const reviewWarning = sanitizeBook({ ...book('review-warning'), basecamp_references: [
     { reference_kind: 'book_todo_list', provisioning_status: 'provisioned' },
@@ -90,7 +115,14 @@ async function run() {
   assert(outcomeWarning.basecamp.status === 'failed' && outcomeWarning.basecamp.retryAvailable === true, 'finalized outcome sync warning takes precedence without exposing detail')
   assert(outcomeWarning.basecamp.retryKind === 'review_outcome', 'finalized outcome exposes the dedicated retry kind')
 
-  console.log('PASS privileged authorization and Bookshelf scoping (19 assertions)')
+  const enriched = await resolvePrivilegedBookshelf(base)
+  const direct = enriched.body.books.find((item: { id: string }) => item.id === 'direct')
+  assert(direct.reviewerName === 'Rae Reviewer', 'assigned reviewer name is projected for the operational card')
+  assert(direct.latestFiles[0].fileName === 'draft.docx' && direct.latestFiles[0].url === 'https://review.example/draft', 'latest safe file access is projected without backend identifiers')
+  assert(direct.attention?.state === 'escalated', 'overdue attention is derived from configured thresholds without changing workflow state')
+  assert(!('reviewstudio_file_id' in direct.latestFiles[0]), 'file projection excludes unnecessary backend identifiers')
+
+  console.log('PASS privileged authorization and Bookshelf scoping (25 assertions)')
 }
 
 await run()

@@ -84,3 +84,26 @@ test('employee context reads replies and readiness from continuation state, not 
   assert.equal(result.threads[0].readyForRereview, true);
   assert.equal(result.threads[0].resolved, undefined);
 });
+
+test('approved sections may be offered for explicit audited reopen without mutating finalized decisions', () => {
+  const result = sanitizeEmployeeUpdateContext({
+    updateCycleId: 'cycle-1', roundNumber: 2, step: 'details',
+    items: [
+      { id: 'requested', step_name: 'details', section_key: 'details.book_title', section_label: 'Book Title', decision: 'needs_updates' },
+      { id: 'approved', step_name: 'details', section_key: 'details.language', section_label: 'Language', decision: 'approved' },
+    ],
+    comments: [{ id: 'c1', review_item_id: 'requested', body: 'Fix title', actionable: true }],
+    reopens: [{ id: 'reopen-1', source_item_id: 'approved', step_name: 'details', section_key: 'details.language', reason: 'The language selection is also wrong.', reopened_at: '2026-09-16T10:00:00Z' }],
+  });
+  assert.deepEqual(result.editableSectionKeys, ['book_title', 'language']);
+  assert.deepEqual(result.reopenedSections, [{ id: 'reopen-1', itemId: 'approved', sectionKey: 'language', reason: 'The language selection is also wrong.', reopenedAt: '2026-09-16T10:00:00Z' }]);
+  assert.deepEqual(result.reopenableSections, []);
+});
+
+test('approved sections not already reopened are exposed as reopenable choices', () => {
+  const result = sanitizeEmployeeUpdateContext({ roundNumber: 1, step: 'content', items: [
+    { id: 'approved', step_name: 'content', section_key: 'content.cover', section_label: 'Kindle eBook Cover', decision: 'approved' },
+  ], reopens: [] });
+  assert.deepEqual(result.editableSectionKeys, []);
+  assert.deepEqual(result.reopenableSections, [{ itemId: 'approved', sectionKey: 'cover', label: 'Kindle eBook Cover' }]);
+});

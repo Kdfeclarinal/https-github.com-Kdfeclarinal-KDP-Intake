@@ -4,6 +4,19 @@ type Row = Record<string, any>
 
 export const employeeUpdateMarker = (roundId: string) => `KDP Intake Employee Updates Round: ${roundId}`
 
+const escapeHtml = (value: unknown) => String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;')
+
+export function employeeUpdateSummary(deps: Row) {
+  const sections = [...new Set((deps.requestedSections || []).map((value: unknown) => String(value || '').trim()).filter(Boolean))]
+  const count = sections.length
+  return [
+    `<div>${escapeHtml(employeeUpdateMarker(deps.round.id))}</div>`,
+    `<p><strong>Reviewer:</strong> ${escapeHtml(deps.reviewerName || 'Assigned reviewer')}</p>`,
+    `<p><strong>${count} ${count === 1 ? 'section requires' : 'sections require'} updates:</strong> ${sections.length ? sections.map(escapeHtml).join(', ') : 'See the KDP Intake review.'}</p>`,
+    '<p>Open the existing Employee Intake link for the book to review requests, reply, make changes, and resubmit.</p>',
+  ].join('')
+}
+
 export async function syncBasecampReviewOutcome(deps: Row) {
   try {
     if (!deps.reviewTodo?.completed) await deps.completeTodo(deps.reviewTodo.id)
@@ -14,7 +27,7 @@ export async function syncBasecampReviewOutcome(deps: Row) {
       }
       const created = await deps.createEmployeeTodo({
         content: `Employee Updates — Round ${deps.round.roundNumber}`,
-        description: `<div>${employeeUpdateMarker(deps.round.id)}</div>`,
+        description: employeeUpdateSummary(deps),
         assignee_ids: [Number(deps.employeePersonId)],
       })
       if (!created?.id) throw new BasecampError(502, 'Basecamp returned an invalid Employee Updates task.')

@@ -275,8 +275,15 @@ Deno.serve(async (req) => {
         .eq("step_name", stepName)
         .eq("decision", "needs_updates");
       if (editableError) throw editableError;
+      const { data: reopenedItems, error: reopenedError } = await supabase
+        .from("book_review_update_reopens")
+        .select("section_key")
+        .eq("book_id", bookId)
+        .eq("source_review_round_id", bookRow.latest_review_round_id)
+        .eq("step_name", stepName);
+      if (reopenedError) throw reopenedError;
       try {
-        const editableSectionKeys = (editableItems || []).map((item) => String(item.section_key));
+        const editableSectionKeys = [...new Set([...(editableItems || []), ...(reopenedItems || [])].map((item) => String(item.section_key)))];
         assertEmployeeUpdateSections(
           asObject(existingStepRow?.state_json),
           stateJson,

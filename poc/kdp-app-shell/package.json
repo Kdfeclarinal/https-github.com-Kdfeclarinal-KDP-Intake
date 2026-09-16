@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "prepare:static-release": "node scripts/prepare-static-release.mjs",
     "dev": "vite",
     "preview": "vite preview"
   },

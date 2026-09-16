@@ -7,6 +7,8 @@ import {
   bookshelfBookView,
   filterAndSortBooks,
 } from './bookshelfState.js';
+import { canOpenSettings, reviewerIntervention } from '../settings/settingsState.js';
+import { userFacingError } from '../errors/userFacingError.js';
 
 const h = React.createElement;
 
@@ -47,12 +49,13 @@ function BookCover({ book }) {
   return h('div', { className: 'kdp-bookshelf-book__cover kdp-bookshelf-book__cover--empty', 'aria-label': `No cover uploaded for ${book.title}` }, h('span', null, 'No cover', h('br'), 'uploaded'));
 }
 
-function ManageMenu({ book, open, onOpen, onRequestAction }) {
+function ManageMenu({ book, open, onOpen, onRequestAction, canManageTrash }) {
   return h('div', { className: `kdp-manage-menu${open ? ' is-open' : ''}` },
     h('button', { type: 'button', className: 'kdp-link-button kdp-manage-menu__trigger', onClick: () => onOpen(open ? null : book.id), 'aria-expanded': open ? 'true' : 'false', 'aria-haspopup': 'menu' }, 'Manage title', h('svg', { viewBox: '0 0 12 8', 'aria-hidden': 'true' }, h('path', { d: 'M1 1.5 6 6.5l5-5' }))),
     h('div', { className: 'kdp-manage-menu__panel' }, h('div', { className: 'kdp-manage-menu__inner', role: 'menu' },
-      h('button', { type: 'button', role: 'menuitem', onClick: () => onRequestAction('archive', book) }, 'Archive title'),
-      h('button', { type: 'button', role: 'menuitem', className: 'is-danger', onClick: () => onRequestAction('delete', book) }, 'Delete title')
+      book.deletedAt
+        ? h('button', { type: 'button', role: 'menuitem', disabled: !canManageTrash, onClick: () => onRequestAction('recover', book) }, 'Recover title')
+        : h('button', { type: 'button', role: 'menuitem', className: 'is-danger', disabled: !canManageTrash, onClick: () => onRequestAction('trash', book) }, 'Move to Trash')
     ))
   );
 }
@@ -64,19 +67,24 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long', day: 'numeric' }).format(date);
 }
 
-function SafeActionDialog({ request, onClose }) {
+function SafeActionDialog({ request, busy, error, onClose, onConfirm }) {
+  const [reason, setReason] = React.useState('');
+  React.useEffect(() => setReason(''), [request]);
   if (!request) return null;
-  const verb = request.action === 'delete' ? 'Delete' : 'Archive';
+  const recovering = request.action === 'recover';
+  const verb = recovering ? 'Recover' : 'Move to Trash';
   return h('div', { className: 'kdp-modal-overlay', role: 'presentation', onMouseDown: (event) => { if (event.target === event.currentTarget) onClose(); } },
     h('div', { className: 'kdp-modal kdp-bookshelf-action-modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'bookshelf-action-title' },
       h('div', { className: 'kdp-modal__header' }, h('h2', { id: 'bookshelf-action-title', className: 'kdp-modal__title' }, `${verb} title?`)),
-      h('p', null, `${verb} is not available until the privileged server action contract is connected. No changes have been made to “${request.book.title}.”`),
-      h('div', { className: 'kdp-bookshelf-action-modal__actions' }, h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', onClick: onClose, autoFocus: true }, 'Close'), h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true, 'aria-disabled': 'true' }, `${verb} title`))
+      h('p', null, recovering ? `Restore “${request.book.title}” to its previous workflow state and reestablish employee access where required. Existing review history and assignments remain intact.` : `Remove “${request.book.title}” from active work. Employee links will be revoked; review history and assignments remain preserved.`),
+      h('label', { className: 'kdp-bookshelf-action-modal__reason' }, h('span', null, 'Reason'), h('textarea', { value: reason, maxLength: 1000, onChange: (event) => setReason(event.target.value), autoFocus: true })),
+      error ? h('p', { className: 'kdp-note kdp-note--error', role: 'alert' }, error) : null,
+      h('div', { className: 'kdp-bookshelf-action-modal__actions' }, h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: busy, onClick: onClose }, 'Cancel'), h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: busy || reason.trim().length < 3, onClick: () => onConfirm(reason) }, busy ? 'Working…' : `${verb} title`))
     )
   );
 }
 
-export function BookshelfPage({ books = [], identity, canCreateBook, onNavigate, onOpenReview, onSignOut, privilegedApi }) {
+export function BookshelfPage({ books = [], identity, canCreateBook, capabilities = [], onNavigate, onOpenReview, onSignOut, privilegedApi }) {
   const [openMenu, setOpenMenu] = React.useState(null);
   const [view, setView] = React.useState('all');
   const [sort, setSort] = React.useState('last_modified');
@@ -86,6 +94,8 @@ export function BookshelfPage({ books = [], identity, canCreateBook, onNavigate,
   const [actionRequest, setActionRequest] = React.useState(null);
   const [retryingBookId, setRetryingBookId] = React.useState(null);
   const [integrationNotice, setIntegrationNotice] = React.useState(null);
+  const [trashBusy, setTrashBusy] = React.useState(false);
+  const [trashError, setTrashError] = React.useState('');
   const shellRef = React.useRef(null);
 
   React.useEffect(() => {
@@ -102,14 +112,26 @@ export function BookshelfPage({ books = [], identity, canCreateBook, onNavigate,
     setRetryingBookId(book.id); setIntegrationNotice(null);
     const functionName = book.basecamp.retryKind === 'review_outcome'
       ? 'retryBasecampReviewOutcome'
-      : book.basecamp.retryKind === 'review_round' ? 'retryBasecampReviewLifecycle' : 'retryBasecampProvisioning';
+      : book.basecamp.retryKind === 'review_round' ? 'retryBasecampReviewLifecycle'
+      : book.basecamp.retryKind === 'employee_reassignment' ? 'retryBasecampEmployeeReassignment' : 'retryBasecampProvisioning';
     try { await privilegedApi.call(functionName, { bookId: book.id }); await privilegedApi.refresh(); }
-    catch (error) { setIntegrationNotice(error.message); }
+    catch (error) { setIntegrationNotice(userFacingError(error, 'Basecamp could not be updated. Try the retry again.').message); }
     finally { setRetryingBookId(null); }
+  };
+  const mutateTrash = async (reason) => {
+    if (!actionRequest || trashBusy) return;
+    setTrashBusy(true); setTrashError('');
+    try {
+      const result = await privilegedApi.call('mutateBookTrash', { bookId: actionRequest.book.id, action: actionRequest.action, expectedRevision: actionRequest.book.trashRevision, reason });
+      setActionRequest(null);
+      if (result.basecampSyncRequired) setIntegrationNotice('The book state changed. Basecamp may need an operator follow-up before its downstream record matches.');
+      await privilegedApi.refresh();
+    } catch (error) { setTrashError(userFacingError(error, 'The book state could not be changed. Try again.').message); }
+    finally { setTrashBusy(false); }
   };
 
   return h('main', { className: 'kdp-app kdp-app--privileged kdp-app--bookshelf', ref: shellRef },
-    h('div', { className: 'kdp-privileged-session' }, h('span', null, identity?.displayName || 'Privileged user'), h('button', { type: 'button', className: 'kdp-link-button', onClick: onSignOut }, 'Sign out')),
+    h('div', { className: 'kdp-privileged-session' }, h('span', null, identity?.displayName || 'Privileged user'), canOpenSettings(capabilities) ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onNavigate('settings') }, 'Settings') : null, h('button', { type: 'button', className: 'kdp-link-button', onClick: onSignOut }, 'Sign out')),
     h('header', { className: 'kdp-bookshelf-hero' },
       h(BrandLogo),
       h('h1', null, 'Create. Manage. Publish.'),
@@ -129,10 +151,20 @@ export function BookshelfPage({ books = [], identity, canCreateBook, onNavigate,
       h('div', { className: 'kdp-bookshelf-list' },
         visibleBooks.length ? visibleBooks.map((rawBook) => {
           const book = bookshelfBookView(rawBook);
+          const intervention = reviewerIntervention(book);
           return h('article', { className: 'kdp-bookshelf-book', key: book.id || book.title },
             h(BookCover, { book }),
-            h('div', { className: 'kdp-bookshelf-book__details' }, h('h3', null, book.title), h('p', { className: 'kdp-bookshelf-book__author' }, `by ${book.author}`), h('div', { className: 'kdp-bookshelf-book__meta' }, h('strong', null, book.type), h('span', { className: `kdp-bookshelf-status kdp-bookshelf-status--${book.status.toLowerCase().replaceAll(' ', '-')}` }, book.status), h('span', null, `Last modified on ${formatDate(book.updatedAt)}`)), book.basecamp.status !== 'ready' ? h('div', { className: `kdp-bookshelf-integration kdp-bookshelf-integration--${book.basecamp.status}` }, h('span', null, book.basecamp.status === 'failed' ? 'Basecamp setup needs attention' : 'Basecamp setup is pending'), book.basecamp.retryAvailable ? h('button', { type: 'button', className: 'kdp-link-button', disabled: retryingBookId === book.id, onClick: () => retryBasecamp(book) }, retryingBookId === book.id ? 'Retrying…' : book.basecamp.retryKind === 'review_outcome' ? 'Retry outcome sync' : book.basecamp.retryKind === 'review_round' ? 'Retry review task' : 'Retry setup') : null) : null),
-            h('div', { className: 'kdp-bookshelf-book__actions' }, h(ManageMenu, { book, open: openMenu === `manage-${book.id}`, onOpen: (id) => setOpenMenu(id ? `manage-${id}` : null), onRequestAction: (action, item) => { setOpenMenu(null); setActionRequest({ action, book: item }); } }), h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: !book.reviewAvailable, title: book.reviewAvailable ? 'Open assigned admin review.' : 'No assigned active review is available.', onClick: book.reviewAvailable ? () => onOpenReview(book.id) : undefined }, 'Open'))
+            h('div', { className: 'kdp-bookshelf-book__details' },
+              h('h3', null, book.title),
+              h('p', { className: 'kdp-bookshelf-book__author' }, `by ${book.author}`),
+              h('div', { className: 'kdp-bookshelf-book__meta' }, h('strong', null, book.type), h('span', { className: `kdp-bookshelf-status kdp-bookshelf-status--${book.status.toLowerCase().replaceAll(' ', '-')}` }, book.deletedAt ? 'In Trash' : book.status), h('span', null, `Last modified on ${formatDate(book.updatedAt)}`)),
+              h('dl', { className: 'kdp-bookshelf-book__assignments' }, h('div', null, h('dt', null, 'Employee'), h('dd', null, book.employeeName || 'Unassigned')), h('div', null, h('dt', null, 'Reviewer'), h('dd', null, book.reviewerName || 'Unassigned'))),
+              book.latestFiles.length ? h('div', { className: 'kdp-bookshelf-book__files' }, book.latestFiles.map((file) => file.url ? h('a', { key: `${file.fileType}-${file.fileName}`, href: file.url, target: '_blank', rel: 'noopener noreferrer' }, `${file.fileType || 'File'}: ${file.fileName}`) : h('span', { key: `${file.fileType}-${file.fileName}` }, `${file.fileType || 'File'}: ${file.fileName}`))) : h('span', { className: 'kdp-bookshelf-book__no-files' }, 'No current manuscript or cover file'),
+              book.attention ? h('div', { className: `kdp-bookshelf-attention is-${book.attention.state}`, role: 'status' }, book.attention.state === 'escalated' ? 'Escalated attention' : 'Overdue', ` since ${formatDate(book.attention.since)}`) : null,
+              book.deletedAt ? h('div', { className: 'kdp-bookshelf-intervention' }, `Moved to Trash ${formatDate(book.deletedAt)}${book.deletedBy ? ` by ${book.deletedBy}` : ''}`) : intervention ? h('div', { className: 'kdp-bookshelf-intervention', role: 'status' }, h('span', null, intervention === 'unassigned' ? 'Reviewer assignment required' : 'Current reviewer is ineligible'), canOpenSettings(capabilities) ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onNavigate('settings') }, 'Manage assignment') : null) : null,
+              book.basecamp.status !== 'ready' ? h('div', { className: `kdp-bookshelf-integration kdp-bookshelf-integration--${book.basecamp.status}` }, h('span', null, book.basecamp.operatorIntervention ? 'Basecamp record needs operator follow-up' : book.basecamp.status === 'failed' ? 'Basecamp setup needs attention' : 'Basecamp setup is pending'), book.basecamp.retryAvailable ? h('button', { type: 'button', className: 'kdp-link-button', disabled: retryingBookId === book.id, onClick: () => retryBasecamp(book) }, retryingBookId === book.id ? 'Retrying…' : book.basecamp.retryKind === 'review_outcome' ? 'Retry outcome sync' : book.basecamp.retryKind === 'review_round' ? 'Retry review task' : book.basecamp.retryKind === 'employee_reassignment' ? 'Retry employee sync' : 'Retry setup') : null) : null
+            ),
+            h('div', { className: 'kdp-bookshelf-book__actions' }, h(ManageMenu, { book, canManageTrash: capabilities.includes('can_manage_users'), open: openMenu === `manage-${book.id}`, onOpen: (id) => setOpenMenu(id ? `manage-${id}` : null), onRequestAction: (action, item) => { setOpenMenu(null); setTrashError(''); setActionRequest({ action, book: item }); } }), h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: Boolean(book.deletedAt) || !book.reviewAvailable, title: book.deletedAt ? 'Recover this title before opening it.' : book.reviewAvailable ? 'Open assigned admin review.' : 'No assigned active review is available.', onClick: !book.deletedAt && book.reviewAvailable ? () => onOpenReview(book.id) : undefined }, 'Open'))
           );
         }) : h('div', { className: 'kdp-bookshelf-empty' },
           h('h3', null, query || filter !== 'all' || view !== 'all' ? 'No titles match these controls' : 'Publishing workspace is ready'),
@@ -141,6 +173,6 @@ export function BookshelfPage({ books = [], identity, canCreateBook, onNavigate,
         )
       )
     ),
-    h(SafeActionDialog, { request: actionRequest, onClose: () => setActionRequest(null) })
+    h(SafeActionDialog, { request: actionRequest, busy: trashBusy, error: trashError, onClose: () => setActionRequest(null), onConfirm: mutateTrash })
   );
 }

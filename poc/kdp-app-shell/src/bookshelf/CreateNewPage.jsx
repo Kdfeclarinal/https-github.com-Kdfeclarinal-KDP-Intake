@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrandLogo } from './BrandLogo.jsx';
+import { userFacingError } from '../errors/userFacingError.js';
 
 const h = React.createElement;
 const TYPES = [
@@ -29,7 +30,7 @@ export function CreateNewPage({ onNavigate, canCreateBook, privilegedApi, onCrea
         setOptions(loaded);
         setReviewerUserId(loaded.defaultReviewerId || '');
         setMode('ebook');
-      } catch (error) { setNotice(error.message); }
+      } catch (error) { setNotice(userFacingError(error, 'Book setup could not be loaded. Try again.').message); }
       finally { setBusy(false); }
       return;
     }
@@ -44,7 +45,7 @@ export function CreateNewPage({ onNavigate, canCreateBook, privilegedApi, onCrea
       await privilegedApi.call('createPrivilegedBook', { employeePersonId, reviewerUserId });
       try { await onCreated(); }
       catch { setNotice('The book was created, but Bookshelf could not refresh. Return to Bookshelf and try again.'); setBusy(false); }
-    } catch (error) { setNotice(error.message); setBusy(false); }
+    } catch (error) { setNotice(userFacingError(error, 'The book could not be created. Try again.').message); setBusy(false); }
   }
 
   return h('main', { className: 'kdp-app kdp-app--privileged kdp-app--create-new' },

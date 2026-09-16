@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrandLogo } from '../bookshelf/BrandLogo.jsx';
 import { callPrivilegedFunction, createPrivilegedAuthClient, loadPrivilegedContext, privilegedConfig } from './privilegedAuth.js';
+import { userFacingError } from '../errors/userFacingError.js';
 
 const h = React.createElement;
 
@@ -15,7 +16,7 @@ function AuthState({ title, message, action, actionLabel }) {
   );
 }
 
-export function PrivilegedGate({ children }) {
+export function PrivilegedGate({ children, contextFunction = 'loadPrivilegedBookshelf' }) {
   const config = React.useMemo(() => privilegedConfig(), []);
   const auth = React.useMemo(() => createPrivilegedAuthClient(config), [config]);
   const [state, setState] = React.useState(auth ? 'loading' : 'configuration');
@@ -25,34 +26,38 @@ export function PrivilegedGate({ children }) {
   const activeSessionToken = React.useRef(null);
 
   const loadContext = React.useCallback(async (accessToken) => {
-    const next = await loadPrivilegedContext({ accessToken, config });
+    const next = contextFunction === 'loadPrivilegedBookshelf'
+      ? await loadPrivilegedContext({ accessToken, config })
+      : await callPrivilegedFunction({ functionName: contextFunction, accessToken, config });
     setContext(next);
     setState('authorized');
     return next;
-  }, [config]);
+  }, [config, contextFunction]);
 
   React.useEffect(() => {
     if (!auth) return undefined;
     let cancelled = false;
     async function resolve(session) {
       if (!session?.access_token) { lastSessionToken.current = null; activeSessionToken.current = null; setContext(null); setState('signed-out'); return; }
-      if (lastSessionToken.current === session.access_token) return;
-      lastSessionToken.current = session.access_token;
+      const contextKey = `${contextFunction}:${session.access_token}`;
+      if (lastSessionToken.current === contextKey) return;
+      lastSessionToken.current = contextKey;
       activeSessionToken.current = session.access_token;
       setState('loading');
       try {
         if (!cancelled) await loadContext(session.access_token);
       } catch (error) {
         if (!cancelled) {
-          setMessage(error.message);
-          setState(error.status === 401 ? 'signed-out' : error.status === 403 ? 'denied' : 'error');
+          const safe = userFacingError(error, 'Access could not be verified. Try again.');
+          setMessage(safe.message);
+          setState(safe.kind === 'auth' ? 'signed-out' : safe.kind === 'permission' ? 'denied' : 'error');
         }
       }
     }
     auth.auth.getSession().then(({ data }) => resolve(data.session)).catch(() => setState('error'));
     const { data: listener } = auth.auth.onAuthStateChange((_event, session) => resolve(session));
     return () => { cancelled = true; listener.subscription.unsubscribe(); };
-  }, [auth, loadContext]);
+  }, [auth, contextFunction, loadContext]);
 
   const signIn = () => auth.auth.signInWithOAuth({
     provider: 'google',
@@ -71,6 +76,6 @@ export function PrivilegedGate({ children }) {
   if (state === 'loading') return h(AuthState, { title: 'Verifying access…', message: 'Checking your current identity and application permissions.' });
   if (state === 'signed-out') return h(AuthState, { title: 'Sign in to Bookshelf', message: 'Use your authorized Google account. A valid Google sign-in alone does not grant application access.', action: signIn, actionLabel: 'Sign in with Google' });
   if (state === 'denied') return h(AuthState, { title: 'Access denied', message: message || 'This Google identity has no active Bookshelf capability.', action: signOut, actionLabel: 'Sign out' });
-  if (state === 'error') return h(AuthState, { title: 'Bookshelf unavailable', message: message || 'Access could not be verified. Try again later.' });
+  if (state === 'error') return h(AuthState, { title: 'Bookshelf unavailable', message: message || 'Access could not be verified. Try again later.', action: () => activeSessionToken.current && loadContext(activeSessionToken.current), actionLabel: 'Try again' });
   return children(context, signOut, actions);
 }

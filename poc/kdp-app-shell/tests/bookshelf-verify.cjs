@@ -1,4 +1,6 @@
 const { chromium } = require('playwright');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const BASE = `http://127.0.0.1:${process.env.KDP_VERIFY_PORT || '8139'}`;
 let passed = 0;
@@ -10,6 +12,14 @@ function check(condition, label) {
 function jwt() {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
   return `${encode({ alg: 'none', typ: 'JWT' })}.${encode({ sub: 'auth-1', exp: Math.floor(Date.now() / 1000) + 3600 })}.test`;
+}
+async function holdForHumanTrial(browser) {
+  console.log('HUMAN TRIAL READY — close the Playwright browser or press Ctrl+C in this terminal to stop.');
+  await new Promise((resolve) => {
+    const stop = () => resolve();
+    browser.once('disconnected', stop);
+    process.once('SIGINT', stop);
+  });
 }
 
 (async () => {
@@ -46,14 +56,30 @@ function jwt() {
   await authorizedContext.route('https://project.supabase.co/auth/v1/user', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'auth-1', aud: 'authenticated', role: 'authenticated', email: 'reviewer@example.test', app_metadata: { provider: 'google' }, user_metadata: {}, created_at: '2026-09-11T00:00:00Z' }) }));
   let bookshelfLoads = 0;
   let retryComplete = false;
+  let trashRecovered = false;
   await authorizedContext.route('https://project.supabase.co/functions/v1/loadPrivilegedBookshelf', (route) => {
     bookshelfLoads += 1;
     const headers = route.request().headers();
     check(headers.authorization?.startsWith('Bearer ') && headers.apikey === 'public-test-key', 'Bookshelf request carries session JWT and public key');
-    const books = [{ id: 'b-1', title: 'Authorized title', author: 'Known Author', type: 'Kindle eBook', status: 'IN_REVIEW', reviewAvailable: true, updatedAt: '2026-09-11T00:00:00Z', createdAt: '2026-09-10T00:00:00Z', basecamp: { status: 'ready', retryAvailable: false } }];
+    const books = [{ id: 'b-1', title: 'Authorized title', author: 'Known Author', type: 'Kindle eBook', status: 'IN_REVIEW', activeReview: true, reviewerId: 'owner-1', reviewerEligible: true, reviewerName: 'Rae Reviewer', reviewAvailable: true, employeePersonId: 'person-1', employeeName: 'Pre-Press Employee', latestFiles: [{ fileType: 'manuscript', fileName: 'authorized-title.docx', url: 'https://files.example.test/authorized-title.docx' }], attention: { state: 'overdue', since: '2026-09-10T00:00:00Z' }, updatedAt: '2026-09-11T00:00:00Z', createdAt: '2026-09-10T00:00:00Z', basecamp: { status: 'ready', retryAvailable: false } }];
+    books.push({ id: 'b-trash', title: 'Recoverable title', author: 'History Preserved', type: 'Kindle eBook', status: 'EMPLOYEE_INTAKE', reviewAvailable: false, employeeName: 'Pre-Press Employee', reviewerName: 'Rae Reviewer', deletedAt: trashRecovered ? null : '2026-09-14T00:00:00Z', deletedBy: trashRecovered ? '' : 'Taylor Tech Admin', trashRevision: trashRecovered ? 2 : 1, updatedAt: '2026-09-14T00:00:00Z', createdAt: '2026-09-01T00:00:00Z', basecamp: trashRecovered ? { status: 'ready', retryAvailable: false } : { status: 'incomplete', retryAvailable: false, operatorIntervention: true } });
+    if (process.env.KDP_HUMAN_TRIAL === '1') books.push(
+      { id: 'b-unassigned', title: 'Awaiting reviewer assignment', author: 'Fixture Author', type: 'Kindle eBook', status: 'AWAITING_REVIEW', activeReview: true, reviewerId: null, reviewerEligible: false, reviewAvailable: false, employeePersonId: 'person-1', employeeName: 'Pre-Press Employee', updatedAt: '2026-09-12T00:00:00Z', createdAt: '2026-09-12T00:00:00Z', basecamp: { status: 'ready', retryAvailable: false } },
+      { id: 'b-warning', title: 'Outcome sync needs attention', author: 'Fixture Author', type: 'Kindle eBook', status: 'EMPLOYEE_UPDATES', activeReview: false, reviewerId: 'reviewer-1', reviewerEligible: true, reviewAvailable: false, employeePersonId: 'person-1', employeeName: 'Replacement Employee', updatedAt: '2026-09-13T00:00:00Z', createdAt: '2026-09-13T00:00:00Z', basecamp: { status: 'failed', retryAvailable: true, retryKind: 'review_outcome' } },
+    );
     if (bookshelfLoads > 1) books.unshift({ id: 'b-2', title: 'Untitled', author: '', type: 'Kindle eBook', status: 'draft', updatedAt: '2026-09-12T00:00:00Z', createdAt: '2026-09-12T00:00:00Z', basecamp: retryComplete ? { status: 'ready', retryAvailable: false } : { status: 'failed', retryAvailable: true } });
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, capabilities: ['can_create_book', 'can_review', 'can_view_all_books'], canViewBookshelf: true, canCreateBook: true, books }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, capabilities: ['can_create_book', 'can_review', 'can_view_all_books', 'can_manage_users', 'can_change_default_reviewer', 'can_manage_integrations'], canViewBookshelf: true, canCreateBook: true, books }) });
   });
+  await authorizedContext.route('https://project.supabase.co/functions/v1/loadOperationalSettings', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+    ok: true, identity: { id: 'owner-1', displayName: 'Authorized Reviewer', role: 'owner' }, capabilities: ['can_manage_users', 'can_change_default_reviewer', 'can_manage_integrations', 'can_view_all_books'],
+    users: [
+      { id: 'owner-1', displayName: 'Olivia Owner', email: 'owner@example.test', role: 'owner', active: true, revision: 2, capabilities: ['can_manage_users', 'can_manage_integrations', 'can_review', 'can_finalize_book'] },
+      { id: 'admin-1', displayName: 'Taylor Tech Admin', email: 'admin@example.test', role: 'tech_admin', active: true, revision: 1, capabilities: ['can_manage_users', 'can_assign_reviewer', 'can_reassign_reviewer'] },
+      { id: 'reviewer-1', displayName: 'Rae Reviewer', email: 'reviewer@example.test', role: 'reviewer', active: true, revision: 4, capabilities: ['can_review', 'can_claim_review'] },
+      { id: 'disabled-1', displayName: 'Disabled Reviewer', email: 'disabled@example.test', role: 'reviewer', active: false, revision: 3, capabilities: ['can_review'] },
+    ], employees: [{ id: 'person-1', displayName: 'Pre-Press Employee', email: 'employee@example.test' }], defaultReviewerId: 'reviewer-1',
+    integrations: { basecamp: { status: 'connected', projectId: 'project-1' }, reviewstudio: { configured: true }, ghl: { configured: true } },
+  }) }));
   await authorizedContext.route('https://project.supabase.co/functions/v1/loadPrivilegedAdminReview', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, book: { id: 'b-1', title: 'Authorized title', author: 'Known Author' }, reviewRound: { roundNumber: 1, status: 'in_review' }, items: [{ id: 'item-1', step: 'details', sectionKey: 'details.language', label: 'Language', sortOrder: 1, decision: 'pending', snapshot: { value: { value: 'English' } } }], comments: [], files: [], saveAvailable: false, finalizationAvailable: false }) }));
   await authorizedContext.route('https://project.supabase.co/functions/v1/loadCreateBookOptions', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, employees: [{ id: 'person-1', displayName: 'Pre-Press Employee', avatarUrl: null }], reviewers: [{ id: 'reviewer-1', displayName: 'Eligible Reviewer' }], defaultReviewerId: 'reviewer-1' }) }));
   await authorizedContext.route('https://project.supabase.co/functions/v1/createPrivilegedBook', async (route) => {
@@ -66,13 +92,45 @@ function jwt() {
     retryComplete = true;
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, bookId: 'b-2', basecamp: { status: 'ready' } }) });
   });
+  await authorizedContext.route('https://project.supabase.co/functions/v1/mutateBookTrash', async (route) => {
+    const body = route.request().postDataJSON();
+    check(body.bookId === 'b-trash' && body.action === 'recover' && body.expectedRevision === 1 && body.reason.length >= 3, 'Trash recovery sends the scoped action, revision, and reason');
+    trashRecovered = true;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, deleted: false, trashRevision: 2, employeeAccessReestablished: true, basecampSyncRequired: true }) });
+  });
   const authorized = await authorizedContext.newPage();
   await authorized.goto(`${BASE}/?view=bookshelf#access_token=${jwt()}&expires_in=3600&refresh_token=test-refresh&token_type=bearer&type=signup`);
   await authorized.getByRole('heading', { name: 'Create. Manage. Publish.' }).waitFor();
   check(await authorized.getByText('Authorized title').count() === 1, 'authorized server result renders a real card');
   check(await authorized.locator('.kdp-bookshelf-book').getByText('In Review', { exact: true }).count() === 1, 'canonical status renders the correct label');
-  check(!(await authorized.getByRole('button', { name: 'Open' }).isDisabled()), 'assigned review has an enabled privileged destination');
-  await authorized.getByRole('button', { name: 'Open' }).click();
+  check(await authorized.getByText('Pre-Press Employee', { exact: true }).count() >= 1 && await authorized.getByText('Rae Reviewer', { exact: true }).count() >= 1, 'Bookshelf card exposes employee and reviewer assignments');
+  check(await authorized.getByText('manuscript: authorized-title.docx', { exact: true }).count() === 1, 'Bookshelf card exposes latest useful file access');
+  check(await authorized.getByText(/Overdue since/).count() === 1, 'Bookshelf card surfaces derived overdue attention separately from workflow status');
+  await authorized.getByRole('button', { name: /View: All titles/ }).click();
+  await authorized.getByRole('option', { name: 'Trash' }).click();
+  const trashedCard = authorized.locator('.kdp-bookshelf-book').filter({ hasText: 'Recoverable title' });
+  check(await trashedCard.getByText('In Trash', { exact: true }).count() === 1 && await trashedCard.getByText(/Taylor Tech Admin/).count() === 1, 'Trash view preserves workflow context and deletion attribution');
+  await trashedCard.getByRole('button', { name: 'Manage title' }).click();
+  await trashedCard.getByRole('menuitem', { name: 'Recover title' }).click();
+  await authorized.getByLabel('Reason').fill('Restore work after accidental removal.');
+  await authorized.getByRole('button', { name: 'Recover title', exact: true }).click();
+  await trashedCard.waitFor({ state: 'detached' });
+  check(trashRecovered, 'authorized Recover returns the title to its prior workflow without a duplicate book');
+  await authorized.getByRole('button', { name: /View: Trash/ }).click();
+  await authorized.getByRole('option', { name: 'All titles' }).click();
+  await authorized.getByRole('button', { name: 'Settings' }).click();
+  await authorized.getByRole('heading', { name: 'Settings' }).waitFor();
+  check(await authorized.getByRole('heading', { name: 'Team & Permissions' }).count() === 1, 'authorized operational Settings route renders team controls');
+  check(await authorized.getByText('connected', { exact: true }).count() === 1 && await authorized.getByText('Configured', { exact: true }).count() === 2, 'Settings exposes sanitized integration presence');
+  check((await authorized.locator('body').innerText()).includes('secret') === false, 'Settings does not render integration credentials');
+  if (process.env.KDP_CAPTURE_DIR) {
+    fs.mkdirSync(process.env.KDP_CAPTURE_DIR, { recursive: true });
+    await authorized.screenshot({ path: path.join(process.env.KDP_CAPTURE_DIR, 'settings-desktop.png'), fullPage: true });
+  }
+  await authorized.getByRole('button', { name: 'Back to Bookshelf' }).click();
+  await authorized.getByRole('heading', { name: 'Create. Manage. Publish.' }).waitFor();
+  check(!(await authorized.locator('button[title="Open assigned admin review."]').isDisabled()), 'assigned review has an enabled privileged destination');
+  await authorized.locator('button[title="Open assigned admin review."]').click();
   await authorized.getByRole('heading', { name: 'Authorized title' }).waitFor();
   check(new URL(authorized.url()).searchParams.get('view') === 'admin-review' && !new URL(authorized.url()).searchParams.has('access_token'), 'Open routes to privileged Admin Review without employee credentials');
   await authorized.getByRole('button', { name: 'Back to Bookshelf', exact: true }).first().click();
@@ -89,12 +147,34 @@ function jwt() {
   check(await authorized.getByLabel('Reviewer').inputValue() === 'reviewer-1', 'configured default reviewer is selected');
   await authorized.getByRole('button', { name: 'Create Kindle eBook' }).click();
   await authorized.getByRole('heading', { name: 'Create. Manage. Publish.' }).waitFor();
-  check(await authorized.getByText('Basecamp setup needs attention').count() === 1, 'canonical book remains visible with sanitized provisioning failure');
+  const createdBook = authorized.locator('.kdp-bookshelf-book').filter({ hasText: 'Untitled' });
+  check(await createdBook.getByText('Basecamp setup needs attention').count() === 1, 'canonical book remains visible with sanitized provisioning failure');
+  if (process.env.KDP_CAPTURE_DIR) await authorized.screenshot({ path: path.join(process.env.KDP_CAPTURE_DIR, 'bookshelf-warning-desktop.png'), fullPage: true });
   await authorized.getByRole('button', { name: 'Retry setup' }).click();
-  await authorized.getByText('Basecamp setup needs attention').waitFor({ state: 'detached' });
+  await createdBook.getByText('Basecamp setup needs attention').waitFor({ state: 'detached' });
   check(retryComplete, 'privileged retry refreshes the sanitized integration state');
   check(!new URL(authorized.url()).searchParams.has('book_id') && !new URL(authorized.url()).searchParams.has('access_token'), 'privileged flow never manufactures employee credentials');
   check(await authorized.getByText('Authorized title').count() === 1, 'in-memory session survives creation and context refresh');
+  if (process.env.KDP_HUMAN_TRIAL === '1') {
+    const trialSession = `#access_token=${jwt()}&expires_in=3600&refresh_token=test-refresh&token_type=bearer&type=signup`;
+    const settingsTrial = await authorizedContext.newPage();
+    await settingsTrial.goto(`${BASE}/?view=settings${trialSession}`);
+    await settingsTrial.getByRole('heading', { name: 'Settings' }).waitFor();
+    const createTrial = await authorizedContext.newPage();
+    await createTrial.goto(`${BASE}/?view=create-new${trialSession}`);
+    await createTrial.getByRole('heading', { name: 'What would you like to create?' }).waitFor();
+    const reviewTrial = await authorizedContext.newPage();
+    await reviewTrial.goto(`${BASE}/?view=admin-review&book_id=b-1&review_step=details${trialSession}`);
+    await reviewTrial.getByRole('heading', { name: 'Authorized title' }).waitFor();
+    console.log(`Bookshelf: ${BASE}/?view=bookshelf`);
+    console.log(`Settings: ${BASE}/?view=settings`);
+    console.log(`Create New: ${BASE}/?view=create-new`);
+    console.log(`Admin Review fixture: ${BASE}/?view=admin-review&book_id=b-1&review_step=details`);
+    await holdForHumanTrial(browser);
+    await authorizedContext.close();
+    await browser.close();
+    process.exit(0);
+  }
   await authorizedContext.close();
 
   const deniedContext = await browser.newContext();

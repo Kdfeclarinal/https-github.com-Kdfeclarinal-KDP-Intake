@@ -434,6 +434,9 @@ verify_jwt = false
 [functions.respondEmployeeReview]
 verify_jwt = false
 
+[functions.reopenEmployeeReviewSection]
+verify_jwt = false
+
 [functions.resubmitBookForReview]
 verify_jwt = false
 
@@ -444,6 +447,21 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.retryBasecampReviewOutcome]
+verify_jwt = true
+
+[functions.loadOperationalSettings]
+verify_jwt = true
+
+[functions.mutateOperationalSettings]
+verify_jwt = true
+
+[functions.mutateBookAssignment]
+verify_jwt = true
+
+[functions.retryBasecampEmployeeReassignment]
+verify_jwt = true
+
+[functions.mutateBookTrash]
 verify_jwt = true
 
 # [edge_runtime.secrets]

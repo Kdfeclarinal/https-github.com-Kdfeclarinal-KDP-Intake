@@ -19,9 +19,12 @@ export function authorizeEmployeeSubmission(token: Row, bookId: string, nowMs = 
 }
 
 export function resolveSubmissionReviewer(bookReviewerId: unknown, defaultReviewerId: unknown, reviewers: Row[]) {
-  const active = new Set((reviewers || []).filter((row) => row?.active !== false && row?.id).map((row) => String(row.id)));
+  const eligible = (reviewers || []).filter((row) => row?.active !== false && row?.id);
+  const active = new Set(eligible.map((row) => String(row.id)));
   if (bookReviewerId && active.has(String(bookReviewerId))) return { id: String(bookReviewerId), source: "override" };
   if (defaultReviewerId && active.has(String(defaultReviewerId))) return { id: String(defaultReviewerId), source: "default" };
+  const owner = eligible.find((row) => row.role === "owner" || row.role_key === "owner");
+  if (owner) return { id: String(owner.id), source: "owner_fallback" };
   return { id: null, source: null };
 }
 

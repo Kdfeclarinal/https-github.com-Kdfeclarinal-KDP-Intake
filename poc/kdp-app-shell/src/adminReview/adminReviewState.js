@@ -34,6 +34,7 @@ function numberComments(comments) {
       editedAt: comment.editedAt || comment.edited_at || null,
       authorActorType: comment.authorActorType || comment.author_actor_type || 'privileged',
       continuation: comment.continuation || null,
+      permissions: comment.permissions || {},
       issueNumber: comment.issueNumber || comment.round_comment_number || issueNumber,
       persisted: comment.persisted !== false,
     };
@@ -117,4 +118,32 @@ export function reviewIssueNumber(comments, itemId) {
 
 export function reviewMutationControlsVisible(payload) {
   return !payload?.reviewRound?.finalizedAt && payload?.permissions?.canMutate === true;
+}
+
+export function commentMutationControls(comment = {}, finalized = false) {
+  const permissions = comment.permissions || {};
+  return {
+    reply: !finalized && permissions.canReply === true,
+    edit: !finalized && permissions.canEdit === true,
+    delete: !finalized && permissions.canDelete === true,
+    resolve: !finalized && permissions.canResolve === true,
+  };
+}
+
+export function terminalReviewConfirmation(action, items = []) {
+  if (action === 'request_updates') {
+    const sections = items.filter((item) => item.decision === 'needs_updates').map((item) => item.label);
+    return {
+      title: 'Request employee updates?',
+      body: 'This will finalize the current review round. Employee update work will begin for the requested sections.',
+      sections,
+      confirmLabel: 'Request Updates',
+    };
+  }
+  return {
+    title: 'Approve this KDP Intake?',
+    body: 'All required sections are approved. This will finalize the review and mark KDP Intake ready for publishing handoff. It does not publish the book on Amazon KDP.',
+    sections: [],
+    confirmLabel: 'Approve Book',
+  };
 }

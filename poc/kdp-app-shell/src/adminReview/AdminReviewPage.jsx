@@ -1,5 +1,6 @@
 import React from 'react';
 import { KdpProgress } from '../progress/KdpProgress.jsx';
+import { userFacingError } from '../errors/userFacingError.js';
 import {
   createReviewDraft,
   filterReviewComments,
@@ -7,6 +8,8 @@ import {
   reviewPageProgress,
   reviewStepAccessible,
   reviewMutationControlsVisible,
+  commentMutationControls,
+  terminalReviewConfirmation,
 } from './adminReviewState.js';
 
 const h = React.createElement;
@@ -139,9 +142,9 @@ function CommentComposer({ sectionLabel, initialBody = '', title, onClose, onPos
       className: 'kdp-review-composer', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'review-comment-title',
       style: { transform: `translate(${position.x}px, ${position.y}px)` },
     },
-    h('div', { className: 'kdp-review-composer__handle', onPointerDown: startDrag, onPointerMove: moveDrag, onPointerUp: () => { drag.current = null; } },
-      h('h2', { id: 'review-comment-title' }, title || (sectionLabel ? `Comment on ${sectionLabel}` : 'Add a general comment')),
-      h('button', { type: 'button', className: 'kdp-icon-button', onClick: onClose, 'aria-label': 'Close comment composer' },
+    h('div', { className: 'kdp-review-composer__handle' },
+      h('h2', { id: 'review-comment-title', onPointerDown: startDrag, onPointerMove: moveDrag, onPointerUp: () => { drag.current = null; } }, title || (sectionLabel ? `Comment on ${sectionLabel}` : 'Add a general comment')),
+      h('button', { type: 'button', className: 'kdp-icon-button', onPointerUp: onClose, onClick: onClose, 'aria-label': 'Close comment composer' },
         h('svg', { viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'm4 4 12 12M16 4 4 16' }))
       )
     ),
@@ -161,6 +164,7 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
   const comments = filterReviewComments(draft.comments.filter((comment) => !comment.itemId || pageIds.has(comment.itemId)), { query, sort });
   const selectedIndex = Math.max(0, comments.findIndex((comment) => comment.id === activeItemId));
   const selected = comments[selectedIndex] || null;
+  const commentControls = commentMutationControls(selected || {}, !mutationControlsVisible);
   const decided = Object.values(draft.decisions).filter((decision) => decision !== 'pending').length;
 
   React.useEffect(() => { setFiltersOpen(false); }, [draft.step]);
@@ -196,10 +200,10 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
             h('div', null, h('strong', null, selected.author), h('span', null, selected.itemId ? draft.items.find((item) => item.id === selected.itemId)?.label || 'Section comment' : 'General comment'), h('p', null, selected.body), h('time', null, new Date(selected.createdAt).toLocaleString()),
               h(ContinuationContext, { continuation: selected.continuation }),
               mutationControlsVisible ? h('div', { className: 'kdp-review-comment__actions' },
-                !selected.parentCommentId ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onReply(selected) }, 'Reply') : null,
-                selected.authorActorType !== 'employee' ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onEdit(selected) }, 'Edit') : null,
-                selected.actionable && !selected.resolved ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onResolve(selected) }, 'Resolve') : null,
-                selected.authorActorType !== 'employee' ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onDelete(selected) }, 'Delete') : null
+                commentControls.reply ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onReply(selected) }, 'Reply') : null,
+                commentControls.edit ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onEdit(selected) }, 'Edit') : null,
+                commentControls.resolve ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onResolve(selected) }, 'Resolve') : null,
+                commentControls.delete ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onDelete(selected) }, 'Delete') : null
               ) : null)
           ) : h('div', { className: 'kdp-review-panel__empty' }, h('h3', null, 'No comments on this page'), h('p', null, 'Add a general note or comment directly on a section.')),
           mutationControlsVisible ? h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary kdp-review-panel__add', onClick: onAddGeneral }, 'Add Comment') : null
@@ -208,6 +212,21 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
           h('h3', null, 'Current page'), h('p', null, `${decided} of ${draft.items.length} sections decided`),
           h('ul', null, draft.items.map((item) => h('li', { key: item.id }, h('span', null, item.label), h('strong', { className: `is-${draft.decisions[item.id]}` }, labelKey(draft.decisions[item.id])))))
         )
+  );
+}
+
+function TerminalConfirmationDialog({ confirmation, busy, onCancel, onConfirm }) {
+  if (!confirmation) return null;
+  return h('div', { className: 'kdp-review-composer-layer', role: 'presentation' },
+    h('div', { className: 'kdp-confirm-dialog', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'terminal-confirm-title', 'aria-describedby': 'terminal-confirm-body' },
+      h('h2', { id: 'terminal-confirm-title' }, confirmation.title),
+      h('p', { id: 'terminal-confirm-body' }, confirmation.body),
+      confirmation.sections?.length ? h('div', { className: 'kdp-confirm-dialog__summary' }, h('strong', null, 'Sections requiring updates'), h('ul', null, confirmation.sections.map((section) => h('li', { key: section }, section)))) : null,
+      h('div', { className: 'kdp-confirm-dialog__actions' },
+        h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: busy, onClick: onCancel }, 'Cancel'),
+        h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: busy, onClick: onConfirm }, busy ? 'Working…' : confirmation.confirmLabel)
+      )
+    )
   );
 }
 
@@ -228,6 +247,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
   const [jumpItemId, setJumpItemId] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   const [feedback, setFeedback] = React.useState(null);
+  const [terminalAction, setTerminalAction] = React.useState(null);
   const sectionRefs = React.useRef(new Map());
 
   React.useEffect(() => { setReviewPayload(payload); }, [payload]);
@@ -257,7 +277,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
         } catch { /* retain the current screen while reporting the original conflict */ }
         setFeedback({ kind: 'error', text: 'This review changed elsewhere. The latest version was loaded.' });
       } else {
-        setFeedback({ kind: 'error', text: error.message || 'The review action could not be completed.' });
+        setFeedback({ kind: 'error', text: userFacingError(error, 'The review action could not be completed. Try again.').message });
       }
       return false;
     } finally { setBusy(false); }
@@ -311,7 +331,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
       setReviewPayload(next);
       setStep('details');
     } catch (error) {
-      setFeedback({ kind: 'error', text: error.message || 'The selected review round could not be loaded.' });
+      setFeedback({ kind: 'error', text: userFacingError(error, 'The selected review round could not be loaded. Try again.').message });
     } finally { setBusy(false); }
   };
   const nextIndex = STEPS.indexOf(step) + 1;
@@ -323,6 +343,14 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
   const immutable = Boolean(reviewPayload.reviewRound?.finalizedAt);
   const controlsDisabled = busy || immutable || !reviewPayload.permissions?.canMutate;
   const mutationControlsVisible = reviewMutationControlsVisible(reviewPayload);
+  const terminalConfirmation = terminalAction ? terminalReviewConfirmation(terminalAction, allItems) : null;
+
+  const confirmTerminalAction = async () => {
+    const action = terminalAction;
+    if (!action) return;
+    const ok = await runAction(action);
+    if (ok) setTerminalAction(null);
+  };
 
   return h('main', { className: 'kdp-app kdp-admin-review' },
     h('div', { className: 'kdp-privileged-session' }, h('span', null, `${reviewPayload.identity?.displayName || 'Reviewer'} · Round ${reviewPayload.reviewRound?.roundNumber || 1}`), h('button', { type: 'button', className: 'kdp-link-button', onClick: onSignOut }, 'Sign out')),
@@ -335,17 +363,23 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
           h('strong', null, `Historical review round ${reviewPayload.reviewRound.roundNumber || 1}`),
           ` · ${labelKey(reviewPayload.reviewRound.outcome)}${reviewPayload.reviewRound.submittedAt ? ` · Submitted ${new Date(reviewPayload.reviewRound.submittedAt).toLocaleString()}${reviewPayload.reviewRound.submittedBy ? ` by ${reviewPayload.reviewRound.submittedBy}` : ''}` : ''} · Finalized ${reviewPayload.reviewRound.finalizedAt ? new Date(reviewPayload.reviewRound.finalizedAt).toLocaleString() : 'at an unavailable time'}${reviewPayload.reviewRound.finalizedBy ? ` by ${reviewPayload.reviewRound.finalizedBy}` : ''}${reviewPayload.reviewRound.reviewer ? ` · Reviewer: ${reviewPayload.reviewRound.reviewer}` : ''}. This submitted snapshot and review history are permanently read-only.`
         ) : null,
+        immutable ? h('section', { className: 'kdp-review-history-summary', 'aria-label': 'Historical submission record' },
+          h('div', null, h('strong', null, 'Snapshot identity'), h('span', null, reviewPayload.reviewRound.snapshotIdentity || `Round ${reviewPayload.reviewRound.roundNumber || 1}`)),
+          h('div', null, h('strong', null, 'Submitted files'), reviewPayload.files?.length
+            ? h('ul', null, reviewPayload.files.map((file, index) => h('li', { key: `${file.fileType || 'file'}-${file.versionNumber || index}` }, `${file.fileName}${file.versionNumber ? ` · Version ${file.versionNumber}` : ''}${file.fileSizeBytes ? ` · ${Math.ceil(file.fileSizeBytes / 1024)} KB` : ''}${file.createdAt ? ` · ${new Date(file.createdAt).toLocaleString()}` : ''}`)))
+            : h('span', null, 'No submitted file metadata was preserved for this snapshot.'))
+        ) : null,
         feedback ? h('div', { className: `kdp-msg kdp-msg--${feedback.kind}`, role: 'alert' }, feedback.text) : null,
         h('div', { className: 'kdp-admin-review__sections' }, draft.items.map((item) => {
           const issueNumber = reviewIssueNumber(draft.comments, item.id);
           return h('section', { className: `kdp-section kdp-admin-review-section${jumpItemId === item.id ? ' is-jump-target' : ''}`, key: item.id, ref: (node) => { if (node) sectionRefs.current.set(item.id, node); else sectionRefs.current.delete(item.id); } },
             h('div', { className: 'kdp-section-label' }, h('span', null, item.label), issueNumber ? h('button', { type: 'button', className: 'kdp-review-marker', onClick: () => selectComment(draft.comments.find((comment) => comment.itemId === item.id)), 'aria-label': `Open comment ${issueNumber} for ${item.label}` }, issueNumber) : null),
-            h('div', { className: 'kdp-section-content kdp-review-readonly' },
+            h('div', { className: 'kdp-section-content kdp-review-readonly', tabIndex: mutationControlsVisible && !controlsDisabled ? 0 : undefined, role: mutationControlsVisible && !controlsDisabled ? 'button' : undefined, 'aria-label': mutationControlsVisible && !controlsDisabled ? `Comment on ${item.label}` : undefined, onClick: mutationControlsVisible && !controlsDisabled ? () => setComposer({ mode: 'comment', itemId: item.id }) : undefined, onKeyDown: mutationControlsVisible && !controlsDisabled ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setComposer({ mode: 'comment', itemId: item.id }); } } : undefined },
               h(ReadOnlyValue, { name: item.label, value: sectionData(item) }),
-              mutationControlsVisible ? h('button', { type: 'button', disabled: controlsDisabled, className: 'kdp-link-button kdp-review-add-section-comment', onClick: () => setComposer({ mode: 'comment', itemId: item.id }), 'aria-label': `Add comment to ${item.label}` }, '+ Add section comment') : null
+              mutationControlsVisible ? h('button', { type: 'button', disabled: controlsDisabled, className: 'kdp-link-button kdp-review-add-section-comment', onClick: (event) => { event.stopPropagation(); setComposer({ mode: 'comment', itemId: item.id }); }, 'aria-label': `Add comment to ${item.label}` }, '+ Add section comment') : null
             ),
             mutationControlsVisible
-              ? h(DecisionControl, { item, decision: draft.decisions[item.id], disabled: controlsDisabled, onApprove: () => runAction('approve', { itemId: item.id }), onReopen: () => runAction('reopen', { itemId: item.id }) })
+              ? h('div', { onClick: (event) => event.stopPropagation() }, h(DecisionControl, { item, decision: draft.decisions[item.id], disabled: controlsDisabled, onApprove: () => runAction('approve', { itemId: item.id }), onReopen: () => runAction('reopen', { itemId: item.id }) }))
               : h(HistoricalDecision, { decision: draft.decisions[item.id] })
           );
         })),
@@ -357,8 +391,8 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
               ? h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', onClick: () => navigateStep(STEPS[nextIndex]), 'aria-label': 'Review Next Page' }, 'Review Next Page')
               : !mutationControlsVisible ? null
                 : hasUpdates
-                ? h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: controlsDisabled || !allDecided || !reviewPayload.permissions?.canFinalize, onClick: () => runAction('request_updates') }, 'Request Updates')
-                : h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: controlsDisabled || !allDecided || !reviewPayload.permissions?.canFinalize, onClick: () => runAction('approve_book') }, 'Approve Book')
+                ? h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: controlsDisabled || !allDecided || !reviewPayload.permissions?.canFinalize, onClick: () => setTerminalAction('request_updates') }, 'Request Updates')
+                : h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: controlsDisabled || !allDecided || !reviewPayload.permissions?.canFinalize, onClick: () => setTerminalAction('approve_book') }, 'Approve Book')
           )
         )
       ),
@@ -369,6 +403,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
         onDelete: (comment) => runAction('delete_comment', { commentId: comment.id }),
       })
     ),
-    composer ? h(CommentComposer, { sectionLabel: composerItem?.label, title: composer.mode === 'reply' ? 'Reply to comment' : composer.mode === 'edit' ? 'Edit comment' : null, initialBody: composer.mode === 'edit' ? composer.comment.body : '', onClose: closeComposer, onPost: postComment }) : null
+    composer ? h(CommentComposer, { sectionLabel: composerItem?.label, title: composer.mode === 'reply' ? 'Reply to comment' : composer.mode === 'edit' ? 'Edit comment' : null, initialBody: composer.mode === 'edit' ? composer.comment.body : '', onClose: closeComposer, onPost: postComment }) : null,
+    h(TerminalConfirmationDialog, { confirmation: terminalConfirmation, busy, onCancel: () => setTerminalAction(null), onConfirm: confirmTerminalAction })
   );
 }

@@ -10,7 +10,7 @@ export function privilegedDependencies(supabase: Row) {
     },
     findPrivilegedUser: async (authUserId: string) => {
       const { data, error } = await supabase.from("privileged_users")
-        .select("id,display_name,email_snapshot,disabled_at").eq("auth_user_id", authUserId).maybeSingle();
+        .select("id,display_name,email_snapshot,role_key,disabled_at,revision").eq("auth_user_id", authUserId).maybeSingle();
       if (error) throw error;
       return data;
     },
@@ -120,6 +120,11 @@ export async function createBasecampRuntime(supabase: Row, connection: Row, env:
     getCollection,
     postJson: async (path: string, body?: Row) => {
       const response = await request(path, { method: "POST", ...(body === undefined ? {} : { body }) });
+      const text = await response.text();
+      return text ? JSON.parse(text) : {};
+    },
+    putJson: async (path: string, body: Row) => {
+      const response = await request(path, { method: "PUT", body });
       const text = await response.text();
       return text ? JSON.parse(text) : {};
     },

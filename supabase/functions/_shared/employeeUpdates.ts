@@ -32,8 +32,11 @@ export function deriveReadyForRereview({ baselineValue, currentValue, baselineFi
   return { ready: viaReply || viaChange || viaFileChange, viaReply, viaChange, viaFileChange }
 }
 
-export function sanitizeEmployeeUpdateContext({ updateCycleId, roundNumber, step, items, comments, threads, replies, currentSections = {}, currentFiles = [] }: Row) {
+export function sanitizeEmployeeUpdateContext({ updateCycleId, roundNumber, step, items, comments, threads, replies, reopens = [], currentSections = {}, currentFiles = [] }: Row) {
   const requested = (items || []).filter((item: Row) => item.step_name === step && item.decision === 'needs_updates')
+  const stepReopens = (reopens || []).filter((entry: Row) => entry.step_name === step)
+  const reopenedItemIds = new Set(stepReopens.map((entry: Row) => entry.source_item_id))
+  const reopenedKeys = stepReopens.map((entry: Row) => localSectionKey(entry.section_key))
   const requestedIds = new Set(requested.map((item: Row) => item.id))
   const continuationThreads = Array.isArray(threads)
     ? threads.filter((thread: Row) => thread.step_name === step && requestedIds.has(thread.source_item_id) && thread.status === 'active')
@@ -52,7 +55,20 @@ export function sanitizeEmployeeUpdateContext({ updateCycleId, roundNumber, step
   return {
     updateCycleId: updateCycleId || null,
     roundNumber: Number(roundNumber) || 1,
-    editableSectionKeys: requested.map((item: Row) => localSectionKey(item.section_key)),
+    step,
+    editableSectionKeys: [...new Set([...requested.map((item: Row) => localSectionKey(item.section_key)), ...reopenedKeys])],
+    reopenedSections: stepReopens.map((entry: Row) => ({
+      id: entry.id,
+      itemId: entry.source_item_id,
+      sectionKey: localSectionKey(entry.section_key),
+      reason: String(entry.reason || ''),
+      reopenedAt: entry.reopened_at || null,
+    })),
+    reopenableSections: (items || []).filter((item: Row) => item.step_name === step && item.decision === 'approved' && !reopenedItemIds.has(item.id)).map((item: Row) => ({
+      itemId: item.id,
+      sectionKey: localSectionKey(item.section_key),
+      label: String(item.section_label || localSectionKey(item.section_key).replaceAll('_', ' ')),
+    })),
     threads: continuationThreads.map((thread: Row) => {
       const sectionKey = localSectionKey(thread.section_key)
       const threadReplies = (replies || []).filter((reply: Row) => reply.update_thread_id === thread.id)

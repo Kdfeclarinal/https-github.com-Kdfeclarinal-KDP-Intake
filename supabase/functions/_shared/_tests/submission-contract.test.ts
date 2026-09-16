@@ -57,7 +57,7 @@ test(
 );
 
 test(
-  "submission uses valid per-book reviewer then default and safely allows unassigned",
+  "submission uses per-book, default, then eligible Owner fallback and safely allows unassigned",
   () => {
     const reviewers = [
       { id: "book-reviewer", active: true },
@@ -85,6 +85,18 @@ test(
       {
         id: "default-reviewer",
         source: "default",
+      }
+    );
+
+    assert.deepEqual(
+      resolveSubmissionReviewer(
+        "inactive",
+        "also-inactive",
+        [...reviewers, { id: "owner-reviewer", active: true, role: "owner" }]
+      ),
+      {
+        id: "owner-reviewer",
+        source: "owner_fallback",
       }
     );
 

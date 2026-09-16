@@ -15,7 +15,7 @@ function jwt() {
 }
 
 (async () => {
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const browser = await chromium.launch({ headless: process.env.KDP_HEADED !== '1', args: ['--no-sandbox'] });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   await context.addInitScript(() => { window.KDP_INTAKE_CONFIG = { supabaseUrl: 'https://project.supabase.co', supabasePublishableKey: 'public-test-key' }; });
   await context.route('https://project.supabase.co/auth/v1/user', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'auth-1', app_metadata: { provider: 'google' }, user_metadata: {}, created_at: '2026-09-14T00:00:00Z' }) }));
@@ -25,7 +25,7 @@ function jwt() {
       identity: { displayName: 'Rae Reviewer' },
       book: { id: 'book-1', title: "Kein's Book", author: 'Kein Eclarinal' },
       reviewRound: { id: 'round-1', roundNumber: 1, status: 'in_review', revision: 0, reachedSteps: ['details'] },
-      permissions: { canMutate: true, canFinalize: false }, roundHistory: [],
+      permissions: { canMutate: true, canFinalize: true }, roundHistory: [],
       items: [
         { id: 'details-language', step: 'details', sectionKey: 'details.language', label: 'Language', sortOrder: 1, decision: 'pending', snapshot: { value: { value: 'English' } } },
         { id: 'details-title', step: 'details', sectionKey: 'details.title', label: 'Book Title', sortOrder: 2, decision: 'approved', snapshot: { value: { title: "Kein's Book", subtitle: 'A subtitle' } } },
@@ -42,6 +42,7 @@ function jwt() {
     comments: [{
       id: 'continued-comment', itemId: 'continued-item', body: 'Please correct this value.', author: 'Rae Reviewer',
       createdAt: '2026-09-15T01:00:00Z', actionable: true, issueNumber: 1, authorActorType: 'privileged',
+      permissions: { canReply: true, canEdit: true, canResolve: true, canDelete: true },
       continuation: { sourceRoundNumber: 1, originalRequest: 'Please correct this value.', readyForRereview: true, readiness: { viaReply: true, viaChange: false, viaFileChange: false }, employeeReplies: [{ id: 'update-reply', body: 'Corrected and saved.', author: 'Employee', createdAt: '2026-09-15T00:30:00Z' }] },
     }],
   };
@@ -53,24 +54,29 @@ function jwt() {
     items: reviewData.items.map((item) => ({ ...item, decision: item.decision === 'pending' ? 'needs_updates' : item.decision })),
     comments: [{ id: 'history-comment', itemId: 'details-language', body: 'Historical request.', author: 'Rae Reviewer', createdAt: '2026-09-14T09:30:00Z', actionable: true, issueNumber: 1, authorActorType: 'privileged' }],
   };
-  const dataFor = (body) => body.bookId === 'book-history' ? historicalData : body.bookId === 'book-context' ? continuationData : reviewData;
+  const terminalData = { ...reviewData, book: { ...reviewData.book, id: 'book-terminal' }, reviewRound: { id: 'round-terminal', roundNumber: 1, status: 'in_review', revision: 0, reachedSteps: ['details', 'content', 'pricing'] }, items: [{ id: 'pricing-ready', step: 'pricing', sectionKey: 'pricing.territories', label: 'Territories', sortOrder: 1, decision: 'approved', snapshot: { value: { territoryMode: 'all' } } }], comments: [] };
+  const dataFor = (body) => body.bookId === 'book-history' ? historicalData : body.bookId === 'book-context' ? continuationData : body.bookId === 'book-terminal' ? terminalData : reviewData;
   const fulfillReview = (route, data = reviewData) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
   await context.route('https://project.supabase.co/functions/v1/loadPrivilegedAdminReview', async (route) => {
     const body = route.request().postDataJSON();
-    check(['book-1', 'book-context', 'book-history'].includes(body.bookId), 'review loader request is scoped by book id only');
+    check(['book-1', 'book-context', 'book-history', 'book-terminal'].includes(body.bookId), 'review loader request is scoped by book id only');
     return fulfillReview(route, dataFor(body));
   });
+  let mutationCount = 0;
+  let lastMutation = null;
   await context.route('https://project.supabase.co/functions/v1/mutatePrivilegedAdminReview', async (route) => {
     const body = route.request().postDataJSON();
-    check(body.expectedRevision === reviewData.reviewRound.revision, 'review mutation carries the last authoritative revision');
+    mutationCount += 1; lastMutation = body;
+    const targetData = body.bookId === 'book-terminal' ? terminalData : reviewData;
+    check(body.expectedRevision === targetData.reviewRound.revision, 'review mutation carries the last authoritative revision');
     const item = reviewData.items.find((entry) => entry.id === body.itemId);
     if (body.action === 'approve' && item) item.decision = 'approved';
     if (body.action === 'comment' && item) {
       item.decision = 'needs_updates';
-      reviewData.comments.push({ id: 'comment-1', itemId: item.id, body: body.body, author: 'Rae Reviewer', createdAt: new Date().toISOString(), actionable: true, issueNumber: 1, authorActorType: 'privileged' });
+      reviewData.comments.push({ id: 'comment-1', itemId: item.id, body: body.body, author: 'Rae Reviewer', createdAt: new Date().toISOString(), actionable: true, issueNumber: 1, authorActorType: 'privileged', permissions: { canReply: true, canEdit: true, canResolve: true, canDelete: true } });
     }
-    reviewData.reviewRound.revision += 1;
-    return fulfillReview(route);
+    targetData.reviewRound.revision += 1;
+    return fulfillReview(route, targetData);
   });
 
   const page = await context.newPage();
@@ -87,6 +93,14 @@ function jwt() {
   check(await page.getByRole('button', { name: 'APPROVE Language' }).count() === 1, 'pending section has approval action');
   check(await page.getByText('APPROVED ✓').count() === 1, 'persisted approved section renders quietly');
 
+  const beforeSectionClick = mutationCount;
+  await page.getByRole('button', { name: 'Comment on Language' }).click();
+  await page.locator('.kdp-review-composer').waitFor();
+  check(mutationCount === beforeSectionClick, 'clicking a section opens the actionable composer without mutating state');
+  await page.keyboard.press('Escape');
+  await page.locator('.kdp-review-composer').waitFor({ state: 'detached' });
+  check(mutationCount === beforeSectionClick, 'canceling the section composer performs no backend mutation');
+
   await page.getByRole('button', { name: 'APPROVE Language' }).click();
   await page.getByText('APPROVED ✓').nth(1).waitFor();
   check(await page.getByText('APPROVED ✓').count() === 2, 'section approve restores authoritative persisted state');
@@ -100,6 +114,11 @@ function jwt() {
   await page.getByText('UPDATES REQUESTED').waitFor();
   check(await page.getByText('UPDATES REQUESTED').count() === 1, 'actionable comment authoritatively requests updates');
   check(await page.getByRole('button', { name: 'Open comment 1 for Language' }).count() === 1, 'section comment receives a round-local marker');
+
+  await page.getByRole('button', { name: 'Add Comment', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Comment', exact: true }).fill('General workflow note.');
+  await page.getByRole('button', { name: 'Post comment' }).click();
+  check(lastMutation.action === 'comment' && lastMutation.itemId === null && lastMutation.actionable === false, 'panel Add Comment creates a non-actionable general comment');
 
   await page.getByRole('tab', { name: 'Approvals' }).click();
   check(await page.getByText('2 of 2 sections decided').count() === 1, 'approvals tab summarizes the current page');
@@ -132,6 +151,27 @@ function jwt() {
   check(await historicalPage.getByText(/permanently read-only/).count() === 1, 'finalized round shows historical attribution banner');
   for (const name of ['Approve All', 'Reopen Decision', 'Add Comment', 'Reply', 'Edit', 'Resolve', 'Delete', 'Request Updates', 'Approve Book']) {
     check(await historicalPage.getByRole('button', { name, exact: true }).count() === 0, `historical round omits ${name}`);
+  }
+  const terminalPage = await context.newPage();
+  await terminalPage.goto(`${BASE}/?view=admin-review&book_id=book-terminal&review_step=pricing#access_token=${jwt()}&expires_in=3600&refresh_token=test-refresh&token_type=bearer`);
+  await terminalPage.getByRole('button', { name: 'Approve Book', exact: true }).waitFor();
+  const beforeTerminal = mutationCount;
+  await terminalPage.getByRole('button', { name: 'Approve Book', exact: true }).click();
+  await terminalPage.getByRole('heading', { name: 'Approve this KDP Intake?' }).waitFor();
+  check(await terminalPage.getByText(/does not publish the book on Amazon KDP/i).count() === 1, 'terminal approval confirmation states the non-publication consequence');
+  await terminalPage.getByRole('button', { name: 'Cancel', exact: true }).click();
+  check(mutationCount === beforeTerminal, 'canceling terminal confirmation performs no backend mutation');
+  await terminalPage.getByRole('button', { name: 'Approve Book', exact: true }).click();
+  await terminalPage.locator('.kdp-confirm-dialog').getByRole('button', { name: 'Approve Book', exact: true }).click();
+  check(mutationCount === beforeTerminal + 1 && lastMutation.action === 'approve_book', 'confirming terminal approval performs exactly one authoritative mutation');
+  if (process.env.KDP_HUMAN_TRIAL === '1') {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(`${BASE}/?view=admin-review&book_id=book-1&review_step=details`);
+    console.log(`Active review: ${BASE}/?view=admin-review&book_id=book-1&review_step=details`);
+    console.log(`Continuation context: ${BASE}/?view=admin-review&book_id=book-context&review_step=details`);
+    console.log(`Finalized history: ${BASE}/?view=admin-review&book_id=book-history&review_step=details`);
+    console.log('HUMAN TRIAL READY — three fixture tabs are open. Close the Playwright browser or press Ctrl+C in this terminal to stop.');
+    await new Promise((resolve) => { browser.once('disconnected', resolve); process.once('SIGINT', resolve); });
   }
   await context.close();
   await browser.close();

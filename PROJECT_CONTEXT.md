@@ -387,7 +387,8 @@ foundation migration, the new Edge Function, Google enabled in Supabase Auth,
 an allowlisted callback URL, a browser-safe Supabase publishable key supplied
 as runtime configuration, and direct provisioning of privileged identities and
 grants. The local Basecamp slice now supplies the authoritative employee source
-for Create Book; delete/recover, archive, and Admin Review UI are not wired.
+for Create Book. Privileged soft-delete/recover and Admin Review are implemented
+locally but remain part of the unactivated workflow foundation; archive is not wired.
 
 ### Basecamp + privileged Create Book slice — 2026-09-12
 
@@ -431,6 +432,9 @@ submitted round and logical snapshot, resolves a valid per-book/default reviewer
 or leaves the review unassigned, and moves the book to `AWAITING_REVIEW`.
 Existing save/upload endpoints reject that non-editable state. Duplicate/retry
 submissions return the existing Round 1 instead of creating another active round.
+The local closeout migration adds the eligible Owner fallback through an
+upgrade-safe wrapper so databases that already applied the submission foundation
+converge without rewriting migration history.
 
 After the canonical transaction commits, Basecamp completes the existing
 Employee Intake task and creates a distinct `Admin Review — Round 1` task.
@@ -758,17 +762,35 @@ Do not install dependencies or build the POC until the reconnaissance report is 
 
 - The React workflow completion foundation is locally verified but its migrations
   and Edge Functions are not deployed; no hosted end-to-end outcome is claimed.
-- Decisions 58/63/67 are implemented locally: finalized review rounds remain
-  immutable, Employee Updates use separate continuation state, resubmission
-  links that context into the next review round, and finalized history is
-  rendered read-only.
-- Settings for Team & Permissions, Review Defaults, and Integrations; deliberate
-  employee/reviewer reassignment; Trash/Recover; reviewer-ineligibility handling;
-  Owner-safety controls remain gaps. Reviewer and employee optimistic concurrency,
+- Decisions 58/63 are implemented locally: finalized review rounds remain
+  immutable, Employee Updates use separate continuation state, and resubmission
+  links that context into the next review round. Decision 67's read-only
+  boundary and currently preserved snapshot/file identity display are implemented;
+  native ReviewStudio version history remains incomplete.
+- Team & Permissions, Review Defaults, sanitized Integrations status, deliberate
+  employee/reviewer assignment and reassignment, reviewer-ineligibility intervention,
+  and transactional last-Owner preservation controls have meaningful local
+  implementation but are not activated. The local closeout enforces the Tech Admin
+  capability-delegation subset, rejects unauthorized and same-target reviewer
+  overrides without mutation, preserves legal Employee Updates actions after employee
+  reassignment, fails closed when Basecamp event settlement cannot be persisted, and
+  supplies the upgrade-safe Owner fallback. The activation-blocker closeout adds a
+  single-use, service-role-only initial Owner bootstrap for an explicit existing Google
+  identity. Privileged Trash/Recover now derives recoverable employee access from a
+  stable integration-event identity, stores only its hash, and delivers or retries the
+  same credential through the mapped Basecamp task without returning it to the
+  privileged browser. A per-book server claim and settlement CAS serializes launcher
+  delivery so stale in-flight work cannot supersede current employee access. These
+  controls and explicit reasoned Employee Updates section
+  reopen are implemented locally but not activated.
+  Reviewer and employee optimistic concurrency,
   including observed current-file identity, is implemented locally but not activated.
 - ReviewStudio native version history/round mapping, author identity sync,
   post-approval correction, KDP Upload Assistant/handoff, complete AI disclosure,
-  terminal confirmations, and final review/history fidelity remain incomplete.
+  and fidelity that depends on unavailable historical source data remain incomplete.
+- Decision 38 is implemented locally: review navigation records reached-page state
+  without starting review; the first successful meaningful reviewer mutation alone
+  transitions to `IN_REVIEW` and records immutable start attribution.
 - The new SQL migration has static/harness coverage but still requires an
   execution dry-run against a schema-compatible PostgreSQL/Supabase environment.
 - DRM legacy submissions may be blank because old employee validation did not require a choice.
