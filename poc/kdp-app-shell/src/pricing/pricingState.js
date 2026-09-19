@@ -22,6 +22,19 @@ const num = (value) => value === '' || value == null || !Number.isFinite(Number(
 const sectionValue = (section) => section && typeof section === 'object' && section.value && typeof section.value === 'object' ? section.value : (section || {});
 const roundCurrency = (value, currency) => currency === 'JPY' ? Math.round(value) : Math.round((value + Number.EPSILON) * 100) / 100;
 
+export function kdpFileSizeMB(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  // KDP rounds the delivered file size up to the nearest kilobyte before
+  // applying the marketplace per-MB delivery rate.
+  return Math.ceil(value / 1024) / 1024;
+}
+
+export function effectiveRoyaltyPlan(marketplaceId, royaltyPlan, kdpSelect) {
+  const selectMarkets = new Set(['amazon.in', 'amazon.co.jp', 'amazon.com.br', 'amazon.com.mx']);
+  return royaltyPlan === '70' && selectMarkets.has(marketplaceId) && !kdpSelect ? '35' : royaltyPlan;
+}
+
 function boundedConvertedPrice(value, market, state) {
   const rounded = roundCurrency(value, market.currency);
   if (!state.royaltyPlan) return rounded;
@@ -49,10 +62,11 @@ export function deliveryCost(marketplace, royaltyPlan, fileSizeMB) {
 export function estimatedRoyalty(row, royaltyPlan, fileSizeMB, kdpSelect) {
   const price = num(row.listPrice);
   if (price === null || !royaltyPlan) return null;
-  const selectMarkets = ['amazon.in', 'amazon.co.jp', 'amazon.com.br', 'amazon.com.mx'];
-  const effectivePlan = royaltyPlan === '70' && selectMarkets.includes(row.id) && !kdpSelect ? '35' : royaltyPlan;
+  const effectivePlan = effectiveRoyaltyPlan(row.id, royaltyPlan, kdpSelect);
   const delivery = deliveryCost(row, effectivePlan, fileSizeMB);
   if (effectivePlan === '70' && delivery === null) return null;
+  // This is a pre-tax estimate. Exact KDP royalties can differ where the
+  // customer-facing list price includes applicable VAT/tax.
   return roundCurrency(Math.max(0, (price - (delivery || 0)) * (effectivePlan === '70' ? 0.70 : 0.35)), row.currency);
 }
 
@@ -166,8 +180,10 @@ export function serializePricingState(state) {
       fxAsOf: state.fxAsOf,
       marketplaces: state.marketplaces.map((row) => ({
         id: row.id, marketplace: row.marketplace, currency: row.currency, rate: row.rate,
-        listPrice: row.listPrice, delivery: deliveryCost(row, state.royaltyPlan, state.fileSizeMB),
-        royalty: estimatedRoyalty(row, state.royaltyPlan, state.fileSizeMB, state.kdpSelect), manualOverride: row.manualOverride,
+        listPrice: row.listPrice,
+        delivery: deliveryCost(row, effectiveRoyaltyPlan(row.id, state.royaltyPlan, state.kdpSelect), state.fileSizeMB),
+        royalty: estimatedRoyalty(row, state.royaltyPlan, state.fileSizeMB, state.kdpSelect),
+        manualOverride: row.manualOverride,
       })),
     },
   };
