@@ -291,8 +291,12 @@ function ContentBody({ item, submittedSteps, files = [] }) {
     return h(React.Fragment, null,
       h('p', { className: 'kdp-help' }, 'Review the uploaded manuscript and cover before continuing.'),
       h('div', { className: 'kdp-review-actions' },
-        h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, manuscript ? 'View Manuscript' : 'Manuscript unavailable'),
-        h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, cover ? 'View Cover' : 'Cover unavailable')
+        manuscript?.viewUrl
+          ? h('a', { className: 'kdp-btn kdp-btn--primary', href: manuscript.viewUrl, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open submitted manuscript in ReviewStudio' }, 'View Manuscript')
+          : h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, 'Manuscript unavailable'),
+        cover?.viewUrl
+          ? h('a', { className: 'kdp-btn kdp-btn--primary', href: cover.viewUrl, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open submitted cover in ReviewStudio' }, 'View Cover')
+          : h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, 'Cover unavailable')
       ),
       h('div', { className: 'kdp-info-box' }, h('div', { className: 'kdp-info-box__msg' }, 'Uploaded files were captured with this submitted review snapshot.'))
     );
