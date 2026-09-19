@@ -60,6 +60,8 @@ async function attachMock(page) {
   // wait for form
   await page.waitForSelector('.kdp-form', { timeout: 5000 });
 
+  ok('employee launcher credential is removed from visible URL after exchange', !new URL(page.url()).searchParams.has('access_token'));
+  ok('short-lived employee session is kept only in tab session storage', await page.evaluate(() => sessionStorage.getItem('kdp:employee-session:book1') === 'kdp_es_local_session'));
   ok('complete Details page renders (form present)', await page.locator('.kdp-form').count() === 1);
   ok('exactly one React root (#kdp-intake-app)', await page.evaluate(() => document.querySelectorAll('#kdp-intake-app').length === 1));
   ok('workflow header has Details/Content/Pricing',
