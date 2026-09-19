@@ -85,15 +85,19 @@ export async function provisionEmployeeIntake(deps: Row) {
       if (existing?.id) todoId = String(existing.id);
       else {
         const author = String(deps.book.author || deps.book.title || "Untitled").trim() || "Untitled";
+        const dueDate = deps.dueDate ? String(deps.dueDate) : "";
         const payload: Row = {
           content: "KDP Pre-Press — Stage 1",
           description:
             `<div><strong>Book Author:</strong> ${escapeHtml(author)}</div>` +
+            (dueDate ? `<div><strong>Due:</strong> ${escapeHtml(dueDate)}</div>` : "") +
             `<div><a href="${escapeHtml(deps.employeeDeepLink)}">Open KDP Intake</a></div>` +
             `<div><small>Internal reference: ${escapeHtml(marker)}</small></div>`,
           assignee_ids: [Number(deps.employeePersonId)],
         };
-        if (deps.dueDate) payload.due_on = String(deps.dueDate);
+        // The canonical due date is stored on the book. Do not guess a provider
+        // field for Basecamp here: the exact create-todo due-date property must
+        // be verified against current Basecamp API documentation before sending it.
         const created = await deps.createTodo(listId, payload);
         if (!created?.id) throw new BasecampError(502, "Basecamp returned an invalid KDP Pre-Press task.");
         todoId = String(created.id);
