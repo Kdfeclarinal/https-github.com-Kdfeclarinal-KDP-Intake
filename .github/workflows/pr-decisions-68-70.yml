@@ -1,0 +1,26 @@
+name: PR Decisions 68-70 Verification
+
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Backend tests
+        run: node --test supabase/tests/*.test.mjs
+      - name: Install frontend dependencies
+        working-directory: poc/kdp-app-shell
+        run: npm ci
+      - name: Frontend state tests
+        working-directory: poc/kdp-app-shell
+        run: node --test tests/*.test.mjs
+      - name: Production build
+        working-directory: poc/kdp-app-shell
+        run: npm run build
