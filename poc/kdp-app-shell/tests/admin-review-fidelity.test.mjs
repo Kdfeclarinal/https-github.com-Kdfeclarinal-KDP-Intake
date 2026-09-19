@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 const page = readFileSync(new URL('../src/adminReview/AdminReviewPage.jsx', import.meta.url), 'utf8');
 const submitted = readFileSync(new URL('../src/adminReview/AdminSubmittedStep.jsx', import.meta.url), 'utf8');
 const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
+const skeleton = readFileSync(new URL('../src/adminReview/AdminReviewSkeleton.jsx', import.meta.url), 'utf8');
 
 test('admin review renders the frozen employee-facing submission instead of a generic metadata inspector', () => {
   assert.match(page, /SubmittedSectionBody/);
@@ -34,4 +35,19 @@ test('review panel follows the approved comments and filter composition', () => 
   assert.match(page, /ADD YOUR COMMENT/);
   assert.match(css, /right:\s*calc\(100% \+ 12px\)/);
   assert.match(css, /kdp-review-comment-list/);
+});
+
+
+test('admin review loading uses the employee shimmer and not frozen blank blocks', () => {
+  assert.match(skeleton, /kdp-skel-band/);
+  assert.doesNotMatch(skeleton, /kdp-skel-line/);
+  assert.match(css, /@keyframes kdp-skel-shimmer/);
+});
+
+test('review actions expose in-flight feedback and the panel matches intake elevation', () => {
+  assert.match(page, /Approving…/);
+  assert.match(page, /Reopening…/);
+  assert.match(page, /Posting…/);
+  assert.match(css, /\.kdp-review-panel\s*\{[\s\S]*?margin-top:\s*108px/);
+  assert.match(css, /\.kdp-review-panel\s*\{[\s\S]*?box-shadow:\s*none/);
 });
