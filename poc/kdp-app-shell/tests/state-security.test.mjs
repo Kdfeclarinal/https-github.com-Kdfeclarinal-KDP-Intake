@@ -76,6 +76,10 @@ test('complete Content extracted fields use the deployed validation vocabulary',
   assert.deepEqual(serializeContentExtractedFields({
     drmChoice: 'yes',
     coverOption: 'upload',
+    aiChoice: 'yes',
+    aiTexts: 'some_minimal',
+    aiImages: 'none',
+    aiTranslations: 'none',
     accessibleImages: 'all',
   }), {
     drm: 'yes_apply_drm',
@@ -86,6 +90,7 @@ test('complete Content extracted fields use the deployed validation vocabulary',
   assert.deepEqual(serializeContentExtractedFields({
     drmChoice: 'no',
     coverOption: 'cover_creator',
+    aiChoice: 'no',
     accessibleImages: 'dont_know',
   }), {
     drm: 'no_do_not_apply_drm',
@@ -93,3 +98,5 @@ test('complete Content extracted fields use the deployed validation vocabulary',
     accessibility: 'dont_know',
   });
 });
+
+

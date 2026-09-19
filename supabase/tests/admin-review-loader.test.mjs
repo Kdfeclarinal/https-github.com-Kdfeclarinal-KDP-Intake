@@ -182,3 +182,63 @@ test('submitted step payload preserves employee-facing values without storage me
   assert.equal(JSON.stringify(result.body.submittedSteps).includes('wrapperSelector'), false);
   assert.equal(JSON.stringify(result.body.submittedSteps).includes('booksColumn'), false);
 });
+
+
+test('submitted ReviewStudio link is exposed only for the exact frozen file identity', async () => {
+  const result = await resolvePrivilegedAdminReview(deps({
+    findRound: async () => ({
+      id: 'round-1',
+      book_id: 'book-1',
+      round_number: 1,
+      status: 'submitted',
+      reviewer_user_id: 'reviewer-1',
+      revision: 7,
+      submission_snapshot: {
+        files: [{
+          id: 'file-row-1',
+          file_name: 'manuscript.pdf',
+          file_type: 'manuscript',
+          reviewstudio_file_id: 'rs-file-1',
+        }],
+      },
+    }),
+    listSnapshotFiles: async () => [{
+      id: 'file-row-1',
+      reviewstudio_file_id: 'rs-file-1',
+      reviewstudio_file_url: 'https://reviewstudio.example/review/frozen-file',
+    }],
+  }), 'book-1');
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.files[0].viewUrl, 'https://reviewstudio.example/review/frozen-file');
+  assert.equal(JSON.stringify(result.body.files).includes('rs-file-1'), false);
+});
+
+test('mismatched ReviewStudio identity never receives a view link', async () => {
+  const result = await resolvePrivilegedAdminReview(deps({
+    findRound: async () => ({
+      id: 'round-1',
+      book_id: 'book-1',
+      round_number: 1,
+      status: 'submitted',
+      reviewer_user_id: 'reviewer-1',
+      revision: 7,
+      submission_snapshot: {
+        files: [{
+          id: 'file-row-1',
+          file_name: 'manuscript.pdf',
+          file_type: 'manuscript',
+          reviewstudio_file_id: 'frozen-id',
+        }],
+      },
+    }),
+    listSnapshotFiles: async () => [{
+      id: 'file-row-1',
+      reviewstudio_file_id: 'different-id',
+      reviewstudio_file_url: 'https://reviewstudio.example/review/wrong-file',
+    }],
+  }), 'book-1');
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.files[0].viewUrl, undefined);
+});

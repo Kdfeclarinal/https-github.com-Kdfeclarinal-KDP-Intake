@@ -275,13 +275,33 @@ function ContentBody({ item, submittedSteps, files = [] }) {
   }
 
   if (key === 'ai_generated_content') {
-    const ai = content.aiGenerated || value || '';
+    const raw = content.aiGenerated ?? value ?? '';
+    const ai = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : { answer: raw };
+    const answer = ai.answer || '';
+    const labels = {
+      none: 'None',
+      some_minimal: 'Some sections, with minimal or no editing',
+      some_extensive: 'Some sections, with extensive editing',
+      entire_minimal: 'Entire work, with minimal or no editing',
+      entire_extensive: 'Entire work, with extensive editing',
+      few_minimal: 'One or a few AI-generated images, with minimal or no editing',
+      few_extensive: 'One or a few AI-generated images, with extensive editing',
+      many_minimal: 'Many AI-generated images, with minimal or no editing',
+      many_extensive: 'Many AI-generated images, with extensive editing',
+    };
     return h(React.Fragment, null,
       h('p', { className: 'kdp-help' }, 'Tell us whether AI-generated content is included in the book.'),
       h('div', { className: 'kdp-radio-row' },
-        h(Radio, { checked: ai === 'yes', label: 'Yes' }),
-        h(Radio, { checked: ai === 'no', label: 'No' })
-      )
+        h(Radio, { checked: answer === 'yes', label: 'Yes' }),
+        h(Radio, { checked: answer === 'no', label: 'No' })
+      ),
+      answer === 'yes'
+        ? h('div', { className: 'kdp-ai-detail-grid kdp-ai-detail-grid--readonly' },
+            h(Field, { label: 'Texts', value: labels[ai.texts] || 'Not answered' }),
+            h(Field, { label: 'Images', value: labels[ai.images] || 'Not answered' }),
+            h(Field, { label: 'Translations', value: labels[ai.translations] || 'Not answered' })
+          )
+        : null
     );
   }
 
@@ -291,8 +311,12 @@ function ContentBody({ item, submittedSteps, files = [] }) {
     return h(React.Fragment, null,
       h('p', { className: 'kdp-help' }, 'Review the uploaded manuscript and cover before continuing.'),
       h('div', { className: 'kdp-review-actions' },
-        h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, manuscript ? 'View Manuscript' : 'Manuscript unavailable'),
-        h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, cover ? 'View Cover' : 'Cover unavailable')
+        manuscript?.viewUrl
+          ? h('a', { className: 'kdp-btn kdp-btn--primary', href: manuscript.viewUrl, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open submitted manuscript in ReviewStudio' }, 'View Manuscript')
+          : h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, 'Manuscript unavailable'),
+        cover?.viewUrl
+          ? h('a', { className: 'kdp-btn kdp-btn--primary', href: cover.viewUrl, target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Open submitted cover in ReviewStudio' }, 'View Cover')
+          : h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary', disabled: true }, 'Cover unavailable')
       ),
       h('div', { className: 'kdp-info-box' }, h('div', { className: 'kdp-info-box__msg' }, 'Uploaded files were captured with this submitted review snapshot.'))
     );

@@ -3,7 +3,7 @@ import { useDirtyNavigation } from '../navigation/DirtyNavigationGuard.jsx';
 import { KdpCheckIcon, KdpProgress } from '../progress/KdpProgress.jsx';
 import { useEmployeeUpdateSection } from '../employeeUpdates/EmployeeUpdateNotice.jsx';
 import { TERRITORIES } from './territories.js';
-import { MARKETPLACES, applyFxRates, deliveryCost, estimatedRoyalty, hydratePricingState, priceLimits, serializePricingState, setMarketplacePrice, setPrimaryPrice, setRoyaltyPlan } from './pricingState.js';
+import { MARKETPLACES, applyFxRates, deliveryCost, effectiveRoyaltyPlan, estimatedRoyalty, hydratePricingState, kdpFileSizeMB, priceLimits, serializePricingState, setMarketplacePrice, setPrimaryPrice, setRoyaltyPlan } from './pricingState.js';
 
 const h = React.createElement;
 const SAVE_ENDPOINT = 'https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/saveEmployeeStep';
@@ -53,6 +53,16 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
   const savingRef = React.useRef(false);
   const submittingRef = React.useRef(false);
   const primaryMarket = MARKETPLACES.find((row) => row.id === state.primaryMarketplace) || MARKETPLACES[0];
+
+  const manuscriptSizeMB = React.useMemo(() => {
+    const manuscript = (Array.isArray(files) ? files : []).find((file) => file?.file_type === 'manuscript');
+    return kdpFileSizeMB(manuscript?.file_size);
+  }, [files]);
+
+  React.useEffect(() => {
+    if (manuscriptSizeMB == null) return;
+    setState((current) => current.fileSizeMB === manuscriptSizeMB ? current : { ...current, fileSizeMB: manuscriptSizeMB });
+  }, [manuscriptSizeMB]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -124,13 +134,14 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
     const row = rowState(market);
     const rowLimits = state.royaltyPlan ? priceLimits(market.id, state.royaltyPlan, state.fileSizeMB) : { min: 0, max: undefined };
     const priceInvalid = state.royaltyPlan && row.listPrice != null && (row.listPrice < rowLimits.min || row.listPrice > rowLimits.max);
-    const delivery = deliveryCost(row, state.royaltyPlan, state.fileSizeMB);
+    const effectivePlan = effectiveRoyaltyPlan(row.id, state.royaltyPlan, state.kdpSelect);
+    const delivery = deliveryCost(row, effectivePlan, state.fileSizeMB);
     const royalty = estimatedRoyalty(row, state.royaltyPlan, state.fileSizeMB, state.kdpSelect);
-    const effectiveRate = state.royaltyPlan === '70' && SELECT_MARKETS.has(row.id) && !state.kdpSelect ? '35%*' : state.royaltyPlan ? `${state.royaltyPlan}%` : '—';
+    const effectiveRate = effectivePlan ? `${effectivePlan}%${effectivePlan !== state.royaltyPlan ? '*' : ''}` : '—';
     return h('div', { className: 'kdp-price-row' + (primary ? ' is-primary' : '') + (!primary && alternate ? ' is-alt' : ''), key: market.id, role: 'row' },
       h('div', { className: 'kdp-price-market', 'data-label': 'Marketplace', role: 'cell' }, h('strong', null, market.marketplace), primary ? h('span', { className: 'kdp-primary-pill' }, 'Primary') : null),
       h('div', { className: 'kdp-price-input-wrap', 'data-label': 'List price', role: 'cell' }, h('label', { className: 'kdp-visually-hidden', htmlFor: `price-${market.id}` }, `${market.marketplace} list price`), h('input', { id: `price-${market.id}`, className: 'kdp-input kdp-price-input', type: 'number', inputMode: 'decimal', min: rowLimits.min, max: rowLimits.max, step: market.currency === 'JPY' ? '1' : '0.01', value: row.listPrice == null ? '' : String(row.listPrice), 'aria-invalid': priceInvalid ? 'true' : 'false', 'aria-describedby': priceInvalid ? `price-error-${market.id}` : undefined, onChange: (event) => { const value = event.target.value === '' ? null : Number(event.target.value); setState((current) => primary ? setPrimaryPrice(current, value) : setMarketplacePrice(current, market.id, value)); } }), h('span', { className: 'kdp-currency' }, market.currency), !primary && row.manualOverride ? h('button', { type: 'button', className: 'kdp-price-reset', onClick: () => setState((current) => setPrimaryPrice({ ...current, marketplaces: current.marketplaces.map((item) => item.id === market.id ? { ...item, manualOverride: false } : item) }, current.primaryListPrice)) }, 'Use estimated price') : null, priceInvalid ? h('span', { id: `price-error-${market.id}`, className: 'kdp-price-error' }, `Set a list price between ${money(rowLimits.min, market.currency)}–${money(rowLimits.max, market.currency)}.`) : null),
-      h('div', { 'data-label': 'Delivery', role: 'cell' }, state.royaltyPlan === '35' ? 'No deduction' : money(delivery, market.currency)), h('div', { 'data-label': 'Rate', role: 'cell' }, effectiveRate), h('div', { 'data-label': 'Estimated royalty', role: 'cell' }, money(royalty, market.currency)));
+      h('div', { 'data-label': 'Delivery', role: 'cell' }, effectivePlan === '35' ? 'No deduction' : money(delivery, market.currency)), h('div', { 'data-label': 'Rate', role: 'cell' }, effectiveRate), h('div', { 'data-label': 'Estimated royalty', role: 'cell' }, money(royalty, market.currency)));
   }
   const secondaryMarkets = MARKETPLACES.filter((row) => row.id !== primaryMarket.id);
 
@@ -146,6 +157,7 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
       h(Section, { label: 'Pricing, royalty, and distribution' }, h('p', { className: 'kdp-help' }, h('strong', null, 'Select a royalty plan and set your Kindle eBook list prices below.'), ' ', h(ExternalLink, { href: PRICING_HELP }, 'How does pricing and royalties work?')), h('div', { className: 'kdp-royalty-options' }, ['35', '70'].map((plan) => h('label', { className: 'kdp-radio', key: plan }, h('input', { type: 'radio', name: 'royaltyPlan', checked: state.royaltyPlan === plan, onChange: () => setState((current) => setRoyaltyPlan(current, plan)) }), h('span', null, `${plan}% royalty`)))), state.royaltyPlan === '70' ? h('div', { className: 'kdp-info-box' }, h('div', { className: 'kdp-info-box__msg' }, 'The 70% option is available only within each marketplace’s eligible price band and deducts delivery costs. Brazil, Japan, Mexico, and India also require KDP Select eligibility.')) : null, h('p', { className: 'kdp-file-size' }, state.fileSizeMB == null ? 'Converted eBook file size is not available yet.' : `Your converted eBook file size is ${state.fileSizeMB.toFixed(2)} MB.`), limits ? h('p', { className: 'kdp-price-guidance' }, `Primary price range for this selection: ${money(limits.min, primaryMarket.currency)}–${money(limits.max, primaryMarket.currency)}.`) : null,
         h('div', { className: 'kdp-price-table', role: 'table', 'aria-label': 'Marketplace pricing' }, h('div', { className: 'kdp-price-head', role: 'row' }, ['Marketplace', 'List price', 'Delivery', 'Rate', 'Estimated royalty'].map((label) => h('div', { role: 'columnheader', key: label }, label))), renderRow(primaryMarket, true), h('div', { className: 'kdp-price-conversion-note', role: 'row' }, h('div', { role: 'cell' }, 'The following list prices were converted based on the previous price you entered.')), secondaryMarkets.map((market, index) => renderRow(market, false, index % 2 === 0))),
         fxStatus === 'loading' ? h('p', { className: 'kdp-help kdp-fx-status', role: 'status' }, 'Loading estimated currency conversion rates…') : fxStatus === 'error' ? h('p', { className: 'kdp-note kdp-note--error kdp-fx-status', role: 'status' }, 'Currency estimates are temporarily unavailable.') : h('p', { className: 'kdp-help kdp-fx-status' }, `Converted prices are estimates using ${state.fxSource || 'server-provided reference rates'}${state.fxAsOf ? ` dated ${state.fxAsOf}` : ''}; Amazon may use different conversion and rounding.`)),
+        h('p', { className: 'kdp-help kdp-royalty-estimate-note' }, 'Estimated royalties use the selected list price and KDP delivery-rate rules. Applicable VAT/tax is customer-jurisdiction dependent and is not guessed here; Amazon’s final royalty may differ.'),
       h(Section, { label: 'Terms & Conditions' }, h('p', { className: 'kdp-help' }, 'It can take up to 72 hours for your title to be available for purchase on Amazon.'), h('p', { className: 'kdp-help kdp-terms-confirmation' }, 'By submitting for approval, I confirm that I agree to and am in compliance with the ', h(ExternalLink, { href: TERMS_HELP }, 'KDP Terms and Conditions'), ' and that I have all rights necessary to make the content I am uploading available for marketing, distribution and sale in each territory I have indicated above.')),
       h('div', { className: 'kdp-actions kdp-actions--nav' }, h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary kdp-btn--back', disabled: saving || submitting || submitted, onClick: () => navigation.requestNavigation('content') }, '< Back to Content'), h('div', { className: 'kdp-actions__group' }, h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: saving || submitting || submitted, onClick: saveDraft }, saving && !submitting ? 'Saving…' : 'Save as Draft'), h('button', { type: 'button', className: 'kdp-btn kdp-btn--primary kdp-btn--continue', disabled: saving || submitting || submitted, onClick: submitForApproval }, submitting ? 'Submitting…' : submitted ? 'Submitted' : employeeUpdate ? 'Resubmit for Review' : 'Submit for Approval'))), feedback ? h('p', { className: `kdp-note kdp-note--${feedback.kind}`, role: feedback.kind === 'error' ? 'alert' : 'status' }, feedback.text) : null),
     navigation.modal,

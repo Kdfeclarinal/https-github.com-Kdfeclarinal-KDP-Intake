@@ -5,8 +5,10 @@ import {
   MARKETPLACES,
   applyFxRates,
   deliveryCost,
+  effectiveRoyaltyPlan,
   estimatedRoyalty,
   hydratePricingState,
+  kdpFileSizeMB,
   priceLimits,
   serializePricingState,
   setPrimaryPrice,
@@ -177,4 +179,44 @@ test('completion validation rejects missing and out-of-band manual marketplace p
   assert.equal(validatePricing(state)['pricing.royalty_and_pricing'], undefined);
   state = setMarketplacePrice(state, 'amazon.ca', 500);
   assert.match(validatePricing(state)['pricing.royalty_and_pricing'], /Amazon\.ca/);
+});
+
+
+test('KDP delivery file size rounds up to the nearest kilobyte', () => {
+  assert.equal(kdpFileSizeMB(1), 1 / 1024);
+  assert.equal(kdpFileSizeMB(1024), 1 / 1024);
+  assert.equal(kdpFileSizeMB(1025), 2 / 1024);
+  assert.equal(kdpFileSizeMB(null), null);
+});
+
+test('70% calculation deducts delivery before applying 70 percent', () => {
+  const row = { ...MARKETPLACES.find((market) => market.id === 'amazon.com'), listPrice: 4.99 };
+  assert.equal(deliveryCost(row, '70', 1), 0.15);
+  assert.equal(estimatedRoyalty(row, '70', 1, false), 3.39);
+});
+
+test('KDP Select-gated marketplaces fall back to 35% with no displayed delivery deduction', () => {
+  const india = { ...MARKETPLACES.find((market) => market.id === 'amazon.in'), listPrice: 199 };
+  assert.equal(effectiveRoyaltyPlan('amazon.in', '70', false), '35');
+  assert.equal(deliveryCost(india, effectiveRoyaltyPlan('amazon.in', '70', false), 2), 0);
+  assert.equal(estimatedRoyalty(india, '70', 2, false), 69.65);
+  assert.equal(effectiveRoyaltyPlan('amazon.in', '70', true), '70');
+});
+
+test('serialized marketplace delivery follows the effective royalty plan', () => {
+  const base = hydratePricingState(null, { primary_marketplace: 'amazon.com' });
+  const state = {
+    ...base,
+    kdpSelect: false,
+    royaltyPlan: '70',
+    fileSizeMB: 1,
+    primaryListPrice: 4.99,
+    marketplaces: base.marketplaces.map((row) => ({
+      ...row,
+      listPrice: row.id === 'amazon.com' ? 4.99 : row.limits70[0],
+    })),
+  };
+  const serialized = serializePricingState(state).royalty_and_pricing.marketplaces;
+  assert.equal(serialized.find((row) => row.id === 'amazon.com').delivery, 0.15);
+  assert.equal(serialized.find((row) => row.id === 'amazon.in').delivery, 0);
 });
