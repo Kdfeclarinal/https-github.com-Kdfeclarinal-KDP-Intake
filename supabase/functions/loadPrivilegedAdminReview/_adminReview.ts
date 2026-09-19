@@ -89,9 +89,22 @@ function sanitizeComment(row: Row, continuations: Map<string, Row>, actorId: str
   }
 }
 
-function sanitizeFiles(round: Row) {
+function safeHttpsUrl(value: unknown) {
+  const text = String(value || '').trim()
+  if (!text) return null
+  try {
+    const parsed = new URL(text)
+    return parsed.protocol === 'https:' ? parsed.toString() : null
+  } catch {
+    return null
+  }
+}
+
+function sanitizeFiles(round: Row, persistedFiles: Row[] = []) {
   const files = round.submission_snapshot?.files
   if (!Array.isArray(files)) return []
+  const persistedById = new Map((persistedFiles || []).map((row: Row) => [String(row.id || ''), row]))
+
   return files.map((file: Row) => {
     const result: Row = { fileName: String(file.file_name || '') }
     if (file.file_type || file.section_key) result.fileType = String(file.file_type || file.section_key)
@@ -99,6 +112,16 @@ function sanitizeFiles(round: Row) {
     if (file.mime_type) result.mimeType = String(file.mime_type)
     if (Number.isFinite(Number(file.file_size_bytes))) result.fileSizeBytes = Number(file.file_size_bytes)
     if (file.created_at) result.createdAt = file.created_at
+
+    const persisted = persistedById.get(String(file.id || ''))
+    const snapshotFileId = String(file.reviewstudio_file_id || '')
+    const persistedFileId = String(persisted?.reviewstudio_file_id || '')
+    const sameSubmittedFile = Boolean(persisted && snapshotFileId && persistedFileId && snapshotFileId === persistedFileId)
+    if (sameSubmittedFile) {
+      const viewUrl = safeHttpsUrl(persisted.reviewstudio_file_url)
+      if (viewUrl) result.viewUrl = viewUrl
+    }
+
     return result
   }).filter((file: Row) => file.fileName)
 }
@@ -192,11 +215,16 @@ export async function resolvePrivilegedAdminReview(deps: Row, bookId: unknown, r
     if (!canObserveAssigned && !actor.capabilities.includes('can_view_all_books')) {
       return { status: 403, body: { ok: false, error: 'This review is not assigned to the current reviewer.' } }
     }
-    const [items, comments, rounds, continuationRows] = await Promise.all([
+    const snapshotFileIds = Array.isArray(round.submission_snapshot?.files)
+      ? round.submission_snapshot.files.map((file: Row) => String(file?.id || '')).filter(Boolean)
+      : []
+
+    const [items, comments, rounds, continuationRows, persistedFiles] = await Promise.all([
       deps.listItems(round.id),
       deps.listComments(round.id),
       deps.listRounds ? deps.listRounds(book.id) : [],
       deps.listContinuations ? deps.listContinuations(round.id) : [],
+      deps.listSnapshotFiles && snapshotFileIds.length ? deps.listSnapshotFiles(snapshotFileIds) : [],
     ])
     const continuations = new Map((continuationRows || []).map((row: Row) => [row.target_comment_id, row]))
     return {
@@ -221,7 +249,7 @@ export async function resolvePrivilegedAdminReview(deps: Row, bookId: unknown, r
         },
         items: (items || []).filter((row: Row) => row.is_reviewable !== false).map(sanitizeItem).sort((a: Row, b: Row) => a.sortOrder - b.sortOrder),
         comments: (comments || []).map((row: Row) => sanitizeComment(row, continuations, actor.id, canMutate)),
-        files: sanitizeFiles(round),
+        files: sanitizeFiles(round, persistedFiles || []),
         submittedSteps: sanitizeSubmittedSteps(round),
         roundHistory: (rounds || []).map((entry: Row) => ({ id: entry.id, roundNumber: Number(entry.round_number) || 1, status: entry.status, outcome: entry.outcome || null, finalizedAt: entry.finalized_at || null })),
         permissions: { canMutate, canFinalize: isLatest && !round.finalized_at && actor.capabilities.includes('can_finalize_book') && (canObserveAssigned || actor.capabilities.includes('can_reassign_reviewer') || actor.capabilities.includes('can_manage_users')) },
