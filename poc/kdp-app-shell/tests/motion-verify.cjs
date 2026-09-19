@@ -30,6 +30,7 @@ function payload(step) {
 }
 
 async function wire(page) {
+  await page.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'b', session_token: 'kdp_es_motion', expires_at: '2099-01-01T00:00:00Z' }) }));
   await page.route('**/functions/v1/loadEmployeePage', (route) => {
     const request = JSON.parse(route.request().postData() || '{}');
     route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload(request.step_name)) });
