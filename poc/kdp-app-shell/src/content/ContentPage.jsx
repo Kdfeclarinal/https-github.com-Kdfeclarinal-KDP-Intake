@@ -89,6 +89,26 @@ const ACCESSIBILITY_OPTIONS = [
   { value: 'all', label: 'All informative images include alternative text and/or extended description.' },
 ];
 
+const AI_CONTENT_DETAIL_ERROR = 'Specify what type of content was AI generated. If none, select “No”.';
+
+const AI_TEXT_OPTIONS = [
+  { value: 'none', label: 'None' },
+  { value: 'some_minimal', label: 'Some sections, with minimal or no editing' },
+  { value: 'some_extensive', label: 'Some sections, with extensive editing' },
+  { value: 'entire_minimal', label: 'Entire work, with minimal or no editing' },
+  { value: 'entire_extensive', label: 'Entire work, with extensive editing' },
+];
+
+const AI_IMAGE_OPTIONS = [
+  { value: 'none', label: 'None' },
+  { value: 'few_minimal', label: 'One or a few AI-generated images, with minimal or no editing' },
+  { value: 'few_extensive', label: 'One or a few AI-generated images, with extensive editing' },
+  { value: 'many_minimal', label: 'Many AI-generated images, with minimal or no editing' },
+  { value: 'many_extensive', label: 'Many AI-generated images, with extensive editing' },
+];
+
+const AI_TRANSLATION_OPTIONS = AI_TEXT_OPTIONS;
+
 // --- helpers -------------------------------------------------------------
 
 function h(tag, props, ...children) {
@@ -297,12 +317,18 @@ function initContentState(book, saved) {
   };
   const cover = v('cover') || {};
   const isbn = v('isbn') || {};
+  const aiRaw = v('ai_content');
+  const ai = aiRaw && typeof aiRaw === 'object' && !Array.isArray(aiRaw) ? aiRaw : {};
+  const legacyAi = typeof aiRaw === 'string' ? aiRaw : '';
   return {
     manuscriptHasFile: !!v('manuscript', (sec) => sec.value && sec.value.uploaded),
     drmChoice: v('manuscript', (sec) => sec.value && sec.value.drm) || '',
     coverOption: cover.option || '',
     coverHasFile: !!(cover.uploaded),
-    aiChoice: v('ai_content') || '',
+    aiChoice: ai.answer || legacyAi || '',
+    aiTexts: ai.texts || '',
+    aiImages: ai.images || '',
+    aiTranslations: ai.translations || '',
     hasPreview: !!v('preview', (sec) => sec.value && sec.value.hasPreview),
     isbn: isbn.isbn || '',
     publisher: isbn.publisher || '',
@@ -310,11 +336,23 @@ function initContentState(book, saved) {
   };
 }
 
+function serializeAiContent(s) {
+  const answer = serializeOptionalChoice(s.aiChoice, ['yes', 'no']);
+  if (!answer) return '';
+  if (answer === 'no') return { answer: 'no', texts: null, images: null, translations: null };
+  return {
+    answer: 'yes',
+    texts: s.aiTexts || '',
+    images: s.aiImages || '',
+    translations: s.aiTranslations || '',
+  };
+}
+
 function buildContentSections(s) {
   return {
     manuscript: { sectionKey: 'manuscript', sectionLabel: 'Manuscript', required: false, reviewable: true, value: { uploaded: !!s.manuscriptHasFile, drm: s.drmChoice } },
     cover: { sectionKey: 'cover', sectionLabel: 'Kindle eBook Cover', required: false, reviewable: true, value: { option: s.coverOption, uploaded: !!s.coverHasFile } },
-    ai_content: { sectionKey: 'ai_content', sectionLabel: 'AI-Generated Content', required: false, reviewable: true, value: serializeOptionalChoice(s.aiChoice, ['yes', 'no']) },
+    ai_content: { sectionKey: 'ai_content', sectionLabel: 'AI-Generated Content', required: false, reviewable: true, value: serializeAiContent(s) },
     preview: { sectionKey: 'preview', sectionLabel: 'Kindle eBook Preview', required: false, reviewable: true, value: { hasPreview: !!s.hasPreview } },
     isbn: { sectionKey: 'isbn', sectionLabel: 'Kindle eBook ISBN', required: false, reviewable: true, value: { isbn: s.isbn, publisher: s.publisher } },
     accessibility: { sectionKey: 'accessibility', sectionLabel: 'Accessibility Features', required: false, reviewable: true, value: s.accessibleImages || '' },
@@ -349,7 +387,14 @@ function requiredErrors(s) {
   if (!s.manuscriptHasFile) errs.manuscript = REQUIRED_MSG.manuscript;
   if (!s.drmChoice) errs.drm = REQUIRED_MSG.drm;
   if (!s.coverHasFile) errs.cover = REQUIRED_MSG.cover;
-  if (!s.aiChoice) errs.ai_content = REQUIRED_MSG.ai_content;
+  if (!s.aiChoice) {
+    errs.ai_content = REQUIRED_MSG.ai_content;
+  } else if (s.aiChoice === 'yes') {
+    const details = [s.aiTexts, s.aiImages, s.aiTranslations];
+    if (details.some((value) => !value) || details.every((value) => value === 'none')) {
+      errs.ai_content = AI_CONTENT_DETAIL_ERROR;
+    }
+  }
   if (!s.accessibleImages) errs.accessibility = REQUIRED_MSG.accessibility;
   return errs;
 }
@@ -848,16 +893,40 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
   );
 
   // --- AI-Generated Content -------------------------------------------------
+  function aiSelect(id, label, field, options) {
+    return h('div', { className: 'kdp-ai-detail-row' },
+      h('label', { className: 'kdp-label', htmlFor: id }, label),
+      h('select', {
+        id,
+        className: 'kdp-select',
+        value: state[field] || '',
+        onChange: (event) => setField(field, event.target.value),
+      },
+        h('option', { value: '' }, 'Select'),
+        options.map((option) => h('option', { key: option.value, value: option.value }, option.label))
+      )
+    );
+  }
+
   const aiSection = h(
     Section,
-    { label: 'AI-Generated Content', error: validationErrors.ai_content ? REQUIRED_MSG.ai_content : null },
+    { label: 'AI-Generated Content', error: validationErrors.ai_content || null },
     h(Help, null, CONTENT_INTRO.aiIntro),
     h('p', { className: 'kdp-help' }, KdpLink({ href: CONTENT_HELP, text: CONTENT_INTRO.aiWhatIs })),
     h('div', { className: 'kdp-field' }, h(Label, { htmlFor: 'kdp-ai-question' }, CONTENT_INTRO.aiQuestion)),
     h('div', { className: 'kdp-choice-box' },
-      h('label', { className: 'kdp-choice-row' },
-        h('input', { type: 'radio', name: 'aiChoice', value: 'yes', checked: state.aiChoice === 'yes', onChange: () => setField('aiChoice', 'yes') }),
-        h('span', null, 'Yes')
+      h('div', { className: 'kdp-choice-row kdp-choice-row--stacked' },
+        h('label', { className: 'kdp-radio' },
+          h('input', { type: 'radio', name: 'aiChoice', value: 'yes', checked: state.aiChoice === 'yes', onChange: () => setField('aiChoice', 'yes') }),
+          h('span', null, 'Yes')
+        ),
+        state.aiChoice === 'yes'
+          ? h('div', { className: 'kdp-ai-detail-grid' },
+              aiSelect('kdp-ai-texts', 'Texts', 'aiTexts', AI_TEXT_OPTIONS),
+              aiSelect('kdp-ai-images', 'Images', 'aiImages', AI_IMAGE_OPTIONS),
+              aiSelect('kdp-ai-translations', 'Translations', 'aiTranslations', AI_TRANSLATION_OPTIONS)
+            )
+          : null
       ),
       h('div', { className: 'kdp-choice-divider' }),
       h('label', { className: 'kdp-choice-row' },
