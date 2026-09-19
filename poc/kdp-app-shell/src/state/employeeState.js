@@ -29,24 +29,9 @@ export function serializeContentExtractedFields(state) {
       ? 'cover_creator'
       : null;
 
-  const aiAnswer = content.aiChoice === 'yes' || content.aiChoice === 'no'
-    ? content.aiChoice
-    : null;
-  const aiGeneratedContent = aiAnswer === 'yes'
-    ? {
-        answer: 'yes',
-        texts: content.aiTexts || '',
-        images: content.aiImages || '',
-        translations: content.aiTranslations || '',
-      }
-    : aiAnswer === 'no'
-      ? { answer: 'no', texts: null, images: null, translations: null }
-      : null;
-
   return {
     drm,
     cover_option: coverOption,
-    ai_generated_content: aiGeneratedContent,
     accessibility: typeof content.accessibleImages === 'string' && content.accessibleImages
       ? content.accessibleImages
       : null,
