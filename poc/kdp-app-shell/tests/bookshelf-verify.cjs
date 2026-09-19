@@ -169,6 +169,19 @@ async function holdForHumanTrial(browser) {
   check(retryComplete, 'privileged retry refreshes the sanitized integration state');
   check(!new URL(authorized.url()).searchParams.has('book_id') && !new URL(authorized.url()).searchParams.has('access_token'), 'privileged flow never manufactures employee credentials');
   check(await authorized.getByText('Authorized title').count() === 1, 'in-memory session survives creation and context refresh');
+
+  await authorizedContext.unroute('https://project.supabase.co/functions/v1/loadCreateBookOptions');
+  await authorizedContext.route('https://project.supabase.co/functions/v1/loadCreateBookOptions', (route) => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: false, error: 'Basecamp Pre-Press is not configured.' }),
+  }));
+  await authorized.getByRole('button', { name: '+ Create new title or series' }).click();
+  await authorized.getByRole('button', { name: 'Create eBook' }).click();
+  await authorized.getByText('Basecamp is not connected. Connect the Pre-Press integration in Settings before creating a book.', { exact: true }).waitFor();
+  check(true, 'disconnected Basecamp renders the exact actionable Create Book message');
+  await authorized.getByRole('button', { name: 'Back to Bookshelf' }).click();
+
   if (process.env.KDP_HUMAN_TRIAL === '1') {
     const trialSession = `#access_token=${jwt()}&expires_in=3600&refresh_token=test-refresh&token_type=bearer&type=signup`;
     const settingsTrial = await authorizedContext.newPage();
