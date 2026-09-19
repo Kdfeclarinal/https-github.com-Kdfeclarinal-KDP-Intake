@@ -3204,6 +3204,13 @@ a.kdp-btn:focus {
   touch-action: none;
 }
 
+.kdp-review-composer__section {
+  margin: 0;
+  padding: 0 16px 8px;
+  color: var(--kdp-muted);
+  font-size: 12px;
+}
+
 .kdp-review-composer__body {
   display: block;
   padding: 0 16px;
