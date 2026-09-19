@@ -138,9 +138,21 @@ function CommentComposer({ sectionLabel, initialBody = '', title, onClose, onPos
   );
 }
 
+function ReviewActionIcon({ kind }) {
+  const paths = {
+    reply: 'M8 6H4v4m0 0 4 4m-4-4h7a5 5 0 0 1 5 5',
+    edit: 'M4 14.5V16h1.5L14 7.5 12.5 6 4 14.5Zm7.5-9L13 4l3 3-1.5 1.5-3-3Z',
+    resolve: 'M4 5h12v11H4V5Zm3 5 2 2 4-5',
+    delete: 'M6 6v10h8V6M4 6h12M8 4h4',
+  };
+  return h('svg', { viewBox: '0 0 20 20', 'aria-hidden': 'true', focusable: 'false' },
+    h('path', { d: paths[kind] || '', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })
+  );
+}
+
 function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onEdit, onResolve, onDelete, mutationControlsVisible }) {
   const [tab, setTab] = React.useState('comments');
-  const [collapsed, setCollapsed] = React.useState(false);
+  const [commentsCollapsed, setCommentsCollapsed] = React.useState(false);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [sort, setSort] = React.useState('newest');
@@ -150,7 +162,10 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
   const selected = comments[selectedIndex] || null;
   const decided = Object.values(draft.decisions).filter((decision) => decision !== 'pending').length;
 
-  React.useEffect(() => { setFiltersOpen(false); }, [draft.step]);
+  React.useEffect(() => {
+    setFiltersOpen(false);
+    setCommentsCollapsed(false);
+  }, [draft.step]);
 
   const move = (direction) => {
     if (!comments.length) return;
@@ -158,53 +173,89 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
     onSelect(comments[index]);
   };
 
-  return h('aside', { className: `kdp-review-panel${collapsed ? ' is-collapsed' : ''}`, 'aria-label': 'Review panel' },
+  return h('aside', { className: 'kdp-review-panel', 'aria-label': 'Review panel' },
     h('div', { className: 'kdp-review-panel__tabs', role: 'tablist' },
-      ['comments', 'approvals'].map((name) => h('button', { type: 'button', role: 'tab', key: name, 'aria-selected': tab === name ? 'true' : 'false', onClick: () => { setTab(name); setCollapsed(false); } }, labelKey(name)))
+      ['comments', 'approvals'].map((name) => h('button', {
+        type: 'button', role: 'tab', key: name,
+        'aria-selected': tab === name ? 'true' : 'false',
+        onClick: () => { setTab(name); setCommentsCollapsed(false); },
+      }, labelKey(name)))
     ),
     h('div', { className: 'kdp-review-panel__toolbar' },
       h('button', { type: 'button', className: 'kdp-link-button', onClick: () => setFiltersOpen((open) => !open), 'aria-expanded': filtersOpen ? 'true' : 'false' }, 'Filter & Sort'),
       h('span', { className: 'kdp-review-panel__nav' },
         h('button', { type: 'button', className: 'kdp-icon-button', onClick: () => move(-1), disabled: !comments.length, 'aria-label': 'Previous comment' }, '<'),
         h('button', { type: 'button', className: 'kdp-icon-button', onClick: () => move(1), disabled: !comments.length, 'aria-label': 'Next comment' }, '>'),
-        h('button', { type: 'button', className: 'kdp-icon-button', onClick: () => setCollapsed((value) => !value), 'aria-label': collapsed ? 'Expand review panel' : 'Collapse review panel' },
-          h('svg', { viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: collapsed ? 'm5 7 5 6 5-6' : 'm5 13 5-6 5 6' }))
+        h('button', {
+          type: 'button',
+          className: 'kdp-icon-button',
+          onClick: () => setCommentsCollapsed((value) => !value),
+          'aria-label': commentsCollapsed ? 'Expand all comments' : 'Collapse all comments',
+          'aria-pressed': commentsCollapsed ? 'true' : 'false',
+        },
+          h('svg', { viewBox: '0 0 20 20', 'aria-hidden': 'true' },
+            h('path', { d: commentsCollapsed ? 'm5 7 5 6 5-6' : 'm5 13 5-6 5 6' })
+          )
         )
       )
     ),
-    filtersOpen && !collapsed ? h('div', { className: 'kdp-review-filter' },
-      h('label', null, h('span', null, 'Comment contains'), h('input', { type: 'search', value: query, onChange: (event) => setQuery(event.target.value), placeholder: 'Comment Contains' })),
-      h('fieldset', null, h('legend', null, 'Sort comments by'), ['newest', 'oldest'].map((value) => h('label', { key: value }, h('input', { type: 'radio', name: 'comment-sort', value, checked: sort === value, onChange: () => setSort(value) }), value === 'newest' ? 'Latest Comment' : 'Oldest Comment')))
+    filtersOpen ? h('div', { className: 'kdp-review-filter' },
+      h('label', null,
+        h('span', null, 'Comment contains'),
+        h('input', { type: 'search', value: query, onChange: (event) => setQuery(event.target.value), placeholder: 'Comment Contains' })
+      ),
+      h('fieldset', null,
+        h('legend', null, 'Sort comments by'),
+        ['newest', 'oldest'].map((value) => h('label', { key: value },
+          h('input', { type: 'radio', name: 'comment-sort', value, checked: sort === value, onChange: () => setSort(value) }),
+          value === 'newest' ? 'Latest Comment' : 'Oldest Comment'
+        ))
+      )
     ) : null,
-    collapsed ? null : tab === 'comments'
+    tab === 'comments'
       ? h('div', { className: 'kdp-review-panel__body' },
           comments.length ? h('div', { className: 'kdp-review-comment-list' }, comments.map((comment) => {
-            const expanded = selected?.id === comment.id;
+            const expanded = !commentsCollapsed || selected?.id === comment.id;
             const controls = commentMutationControls(comment, !mutationControlsVisible);
             const item = comment.itemId ? draft.items.find((candidate) => candidate.id === comment.itemId) : null;
-            return h('article', { className: `kdp-review-comment${expanded ? ' is-expanded' : ''}`, key: comment.id },
-              h('button', { type: 'button', className: 'kdp-review-comment__header', onClick: () => onSelect(comment), 'aria-expanded': expanded ? 'true' : 'false' },
+            return h('article', { className: `kdp-review-comment${expanded ? ' is-expanded' : ' is-collapsed'}`, key: comment.id },
+              h('button', {
+                type: 'button',
+                className: 'kdp-review-comment__header',
+                onClick: () => onSelect(comment),
+                'aria-expanded': expanded ? 'true' : 'false',
+              },
                 h('span', { className: 'kdp-review-comment__index' }, comment.issueNumber || '•'),
-                h('span', { className: 'kdp-review-comment__who' }, h('strong', null, comment.author), h('small', null, comment.itemId ? reviewDisplayLabel(item) : 'General comment'))
+                h('span', { className: 'kdp-review-comment__who' },
+                  h('strong', null, comment.author),
+                  h('small', null, comment.itemId ? reviewDisplayLabel(item) : 'General comment')
+                )
               ),
               expanded ? h('div', { className: 'kdp-review-comment__detail' },
                 h('p', null, comment.body),
                 h('time', null, comment.createdAt ? new Date(comment.createdAt).toLocaleString() : 'Time unavailable'),
                 h(ContinuationContext, { continuation: comment.continuation }),
                 mutationControlsVisible ? h('div', { className: 'kdp-review-comment__actions' },
-                  controls.reply ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onReply(comment) }, 'Reply') : null,
-                  controls.edit ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onEdit(comment) }, 'Edit') : null,
-                  controls.resolve ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onResolve(comment) }, 'Resolve') : null,
-                  controls.delete ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onDelete(comment) }, 'Delete') : null
+                  controls.reply ? h('button', { type: 'button', className: 'kdp-review-comment__icon-action', onClick: () => onReply(comment), 'aria-label': 'Reply to comment', title: 'Reply' }, h(ReviewActionIcon, { kind: 'reply' })) : null,
+                  controls.edit ? h('button', { type: 'button', className: 'kdp-review-comment__icon-action', onClick: () => onEdit(comment), 'aria-label': 'Edit comment', title: 'Edit' }, h(ReviewActionIcon, { kind: 'edit' })) : null,
+                  controls.resolve ? h('button', { type: 'button', className: 'kdp-review-comment__icon-action', onClick: () => onResolve(comment), 'aria-label': 'Resolve comment', title: 'Resolve' }, h(ReviewActionIcon, { kind: 'resolve' })) : null,
+                  controls.delete ? h('button', { type: 'button', className: 'kdp-review-comment__icon-action', onClick: () => onDelete(comment), 'aria-label': 'Delete comment', title: 'Delete' }, h(ReviewActionIcon, { kind: 'delete' })) : null
                 ) : null
               ) : null
             );
-          })) : h('div', { className: 'kdp-review-panel__empty' }, h('h3', null, 'No comments on this page'), h('p', null, 'Add a general note or comment directly on a section.')),
+          })) : h('div', { className: 'kdp-review-panel__empty' },
+            h('h3', null, 'No comments on this page'),
+            h('p', null, 'Add a general note or comment directly on a section.')
+          ),
           mutationControlsVisible ? h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary kdp-review-panel__add', onClick: onAddGeneral }, 'Add Comment') : null
         )
       : h('div', { className: 'kdp-review-panel__body kdp-review-approvals' },
-          h('h3', null, 'Current page'), h('p', null, `${decided} of ${draft.items.length} sections decided`),
-          h('ul', null, draft.items.map((item) => h('li', { key: item.id }, h('span', null, item.label), h('strong', { className: `is-${draft.decisions[item.id]}` }, labelKey(draft.decisions[item.id])))))
+          h('h3', null, 'Current page'),
+          h('p', null, `${decided} of ${draft.items.length} sections decided`),
+          h('ul', null, draft.items.map((item) => h('li', { key: item.id },
+            h('span', null, item.label),
+            h('strong', { className: `is-${draft.decisions[item.id]}` }, labelKey(draft.decisions[item.id]))
+          )))
         )
   );
 }
