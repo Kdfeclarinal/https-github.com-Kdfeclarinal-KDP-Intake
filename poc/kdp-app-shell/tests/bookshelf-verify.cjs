@@ -78,9 +78,17 @@ async function holdForHumanTrial(browser) {
       { id: 'reviewer-1', displayName: 'Rae Reviewer', email: 'reviewer@example.test', role: 'reviewer', active: true, revision: 4, capabilities: ['can_review', 'can_claim_review'] },
       { id: 'disabled-1', displayName: 'Disabled Reviewer', email: 'disabled@example.test', role: 'reviewer', active: false, revision: 3, capabilities: ['can_review'] },
     ], employees: [{ id: 'person-1', displayName: 'Pre-Press Employee', email: 'employee@example.test' }], defaultReviewerId: 'reviewer-1',
+    reviewerMappings: [{ reviewerId: 'owner-1', personId: 'person-1', displayName: 'Pre-Press Employee', projectId: 'project-1' }],
     integrations: { basecamp: { status: 'connected', projectId: 'project-1' }, reviewstudio: { configured: true }, ghl: { configured: true } },
   }) }));
-  await authorizedContext.route('https://project.supabase.co/functions/v1/loadPrivilegedAdminReview', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, book: { id: 'b-1', title: 'Authorized title', author: 'Known Author' }, reviewRound: { roundNumber: 1, status: 'in_review' }, items: [{ id: 'item-1', step: 'details', sectionKey: 'details.language', label: 'Language', sortOrder: 1, decision: 'pending', snapshot: { value: { value: 'English' } } }], comments: [], files: [], saveAvailable: false, finalizationAvailable: false }) }));
+  let reviewerMappingSaved = false;
+  await authorizedContext.route('https://project.supabase.co/functions/v1/saveReviewerBasecampMapping', (route) => {
+    const body = route.request().postDataJSON();
+    check(body.reviewerId === 'owner-1' && body.personId === 'person-1', 'reviewer Basecamp mapping is scoped to selected identities');
+    reviewerMappingSaved = true;
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, reviewerId: body.reviewerId, basecampPerson: { id: body.personId, displayName: 'Pre-Press Employee' } }) });
+  });
+    await authorizedContext.route('https://project.supabase.co/functions/v1/loadPrivilegedAdminReview', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, book: { id: 'b-1', title: 'Authorized title', author: 'Known Author' }, reviewRound: { roundNumber: 1, status: 'in_review' }, items: [{ id: 'item-1', step: 'details', sectionKey: 'details.language', label: 'Language', sortOrder: 1, decision: 'pending', snapshot: { value: { value: 'English' } } }], comments: [], files: [], saveAvailable: false, finalizationAvailable: false }) }));
   await authorizedContext.route('https://project.supabase.co/functions/v1/loadCreateBookOptions', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, employees: [{ id: 'person-1', displayName: 'Pre-Press Employee', avatarUrl: null }], reviewers: [{ id: 'reviewer-1', displayName: 'Eligible Reviewer' }], defaultReviewerId: 'reviewer-1' }) }));
   await authorizedContext.route('https://project.supabase.co/functions/v1/createPrivilegedBook', async (route) => {
     const body = route.request().postDataJSON();
@@ -123,6 +131,10 @@ async function holdForHumanTrial(browser) {
   check(await authorized.getByRole('heading', { name: 'Team & Permissions' }).count() === 1, 'authorized operational Settings route renders team controls');
   check(await authorized.getByText('connected', { exact: true }).count() === 1 && await authorized.getByText('Configured', { exact: true }).count() === 2, 'Settings exposes sanitized integration presence');
   check((await authorized.locator('body').innerText()).includes('secret') === false, 'Settings does not render integration credentials');
+  check(await authorized.getByRole('heading', { name: 'Reviewer Basecamp mapping' }).count() === 1, 'authorized user-management Settings expose reviewer Basecamp mapping');
+  await authorized.getByRole('button', { name: 'Update mapping' }).click();
+  await authorized.getByText('Changes saved.').waitFor();
+  check(reviewerMappingSaved, 'reviewer Basecamp mapping saves through the server-authorized function');
   if (process.env.KDP_CAPTURE_DIR) {
     fs.mkdirSync(process.env.KDP_CAPTURE_DIR, { recursive: true });
     await authorized.screenshot({ path: path.join(process.env.KDP_CAPTURE_DIR, 'settings-desktop.png'), fullPage: true });
