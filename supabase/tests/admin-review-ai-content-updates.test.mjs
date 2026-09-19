@@ -10,7 +10,7 @@ const reviewFoundation = readFileSync(new URL('../migrations/20260914000000_revi
 
 test('Content completion requires structured AI disclosure with the exact all-None error', () => {
   assert.match(saveSource, /content\.ai_content/);
-  assert.match(saveSource, /ai_generated_content/);
+  assert.match(saveSource, /getSectionValue\(stateJson, "ai_content"\)/);
   assert.match(saveSource, /Specify what type of content was AI generated\. If none, select “No”\./);
   assert.match(saveSource, /details\.every\(\(value\) => value === 'none'\)|aiTexts === "none"[\s\S]*aiImages === "none"[\s\S]*aiTranslations === "none"/);
 });
