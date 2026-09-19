@@ -11,7 +11,9 @@ import {
   initiateBasecampOAuth,
 } from "../basecampOAuth.ts";
 import {
+  defaultEmployeeIntakeDueDate,
   loadCreateBookOptions,
+  normalizeEmployeeIntakeTurnaround,
   provisionEmployeeIntake,
 } from "../basecampProvisioning.ts";
 import { confirmProvisioningMapping } from "../basecampBookRuntime.ts";
@@ -226,10 +228,20 @@ test("Create options contain only current project members and eligible reviewers
     listProjectPeople: async () => [{ id: 1, name: "Employee", avatar_url: null, email_address: null }],
     listEligibleReviewers: async () => [{ id: "reviewer-1", display_name: "Reviewer", email_snapshot: "private@example.test" }],
     loadDefaultReviewerId: async () => "reviewer-1",
+    loadWorkflowDefaults: async () => ({ employee_intake_turnaround: { value: 7, unit: "calendar_days" } }),
+    now: Date.parse("2026-09-19T00:00:00Z"),
   });
   assertEquals(options.employees, [{ id: "1", displayName: "Employee", avatarUrl: null }]);
   assertEquals(options.reviewers, [{ id: "reviewer-1", displayName: "Reviewer" }]);
+  assertEquals(options.defaultTurnaround, { value: 7, unit: "calendar_days" });
+  assertEquals(options.defaultDueDate, "2026-09-26");
   assertEquals(JSON.stringify(options).includes("private@example.test"), false);
+});
+
+test("turnaround policy is seven calendar days by default and configurable", () => {
+  assertEquals(normalizeEmployeeIntakeTurnaround({}), { value: 7, unit: "calendar_days" });
+  const policy = normalizeEmployeeIntakeTurnaround({ employee_intake_turnaround: { value: 10, unit: "calendar_days" } });
+  assertEquals(defaultEmployeeIntakeDueDate(policy, Date.parse("2026-09-19T12:00:00Z")), "2026-09-29");
 });
 
 test("Create denies invalid employee/reviewer before canonical commit", async () => {
@@ -237,6 +249,7 @@ test("Create denies invalid employee/reviewer before canonical commit", async ()
     let committed = false;
     await assertRejects(() => createPrivilegedBook({
       actor: { id: "priv-1", capabilities: ["can_create_book"] },
+      bookAuthor: "Levi", dueDate: "2026-09-26",
       employeePersonId: invalid === "employee" ? "999" : "1",
       reviewerUserId: invalid === "reviewer" ? "bad" : "reviewer-1",
       employees: [{ id: "1", displayName: "Employee" }], reviewers: [{ id: "reviewer-1", displayName: "Reviewer" }],
@@ -271,10 +284,10 @@ test("Create requires can_create_book and commits canonical book before Basecamp
   await assertRejects(() => createPrivilegedBook({ actor: { id: "priv-1", capabilities: [] } } as never), BasecampError);
   const order: string[] = [];
   const result = await createPrivilegedBook({
-    actor: { id: "priv-1", capabilities: ["can_create_book"] }, employeePersonId: "1", reviewerUserId: "reviewer-1",
+    actor: { id: "priv-1", capabilities: ["can_create_book"] }, bookAuthor: "Levi", dueDate: "2026-09-26", dueDateSource: "default", employeePersonId: "1", reviewerUserId: "reviewer-1",
     employees: [{ id: "1", displayName: "Employee" }], reviewers: [{ id: "reviewer-1", displayName: "Reviewer" }],
     tokenFactory: () => "test-opaque-value", hashToken: async () => "hash",
-    createCanonicalBook: async (input) => { order.push("canonical"); assertEquals(input.overallStatus, "draft"); return { book: { id: "book-1", title: "Untitled", status: "draft" }, referenceId: "ref-1" }; },
+    createCanonicalBook: async (input) => { order.push("canonical"); assertEquals(input.overallStatus, "draft"); assertEquals(input.bookAuthor, "Levi"); assertEquals(input.dueDate, "2026-09-26"); return { book: { id: "book-1", title: "Untitled", status: "draft" }, referenceId: "ref-1" }; },
     provision: async () => { order.push("basecamp"); return { status: "failed" }; },
   });
   assertEquals(order, ["canonical", "basecamp"]);
@@ -286,11 +299,11 @@ test("provisioning persists each mapping and known success never duplicates", as
   const creates: string[] = [];
   const updates: Record<string, unknown>[] = [];
   const result = await provisionEmployeeIntake({
-    connection, book: { id: "book-1", title: "Untitled" }, employeePersonId: "1", employeeDeepLink: "https://intake.test/authorized-book-entry",
+    connection, book: { id: "book-1", title: "Untitled", author: "Levi" }, employeePersonId: "1", employeeDeepLink: "https://intake.test/authorized-book-entry", dueDate: "2026-09-26",
     reference: { id: "ref-1", provisioning_status: "pending", todo_list_id: null, todo_id: null },
     reconcileList: async () => null, reconcileTodo: async () => null,
     createTodoList: async () => { creates.push("list"); return { id: 11 }; },
-    createTodo: async (_listId, payload) => { creates.push("todo"); assertEquals(payload.assignee_ids, [1]); return { id: 22 }; },
+    createTodo: async (_listId, payload) => { creates.push("todo"); assertEquals(payload.assignee_ids, [1]); assertEquals(payload.content, "KDP Pre-Press — Stage 1"); assertEquals(payload.due_on, "2026-09-26"); return { id: 22 }; },
     updateReference: async (patch) => { updates.push(patch); },
   });
   assertEquals(creates, ["list", "todo"]);
