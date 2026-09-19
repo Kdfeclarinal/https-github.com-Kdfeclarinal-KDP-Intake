@@ -16,6 +16,24 @@ import { SettingsPage } from './settings/SettingsPage.jsx';
 // READ ONLY. No write, no storage, no new dependency.
 const READ_ENDPOINT = 'https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/loadEmployeePage';
 
+function SubmittedForReview({ book }) {
+  const approved = ['approved', 'KDP_INTAKE_APPROVED'].includes(String(book?.overall_status || ''));
+  return React.createElement(
+    'main',
+    { className: 'kdp-app kdp-employee-readonly' },
+    React.createElement('section', { className: 'kdp-employee-readonly__card', role: 'status' },
+      React.createElement('span', { className: 'kdp-employee-readonly__eyebrow' }, approved ? 'KDP Intake complete' : 'KDP Intake submitted'),
+      React.createElement('h1', null, approved ? 'KDP Intake Approved' : 'Submitted for Review'),
+      React.createElement('p', null, approved
+        ? 'This intake has been approved and is read-only.'
+        : 'Your intake was submitted successfully and is now read-only while the reviewer is working.'),
+      React.createElement('p', { className: 'kdp-employee-readonly__hint' }, approved
+        ? 'No further employee changes are available from this link.'
+        : 'If updates are requested, this same book link will reopen the requested sections for you.')
+    )
+  );
+}
+
 function useProtectedEmployeeRead(step) {
   // 'loading' | 'missing' | 'success' | 'error'
   const [state, setState] = React.useState('loading');
@@ -34,6 +52,8 @@ function useProtectedEmployeeRead(step) {
   const [files, setFiles] = React.useState([]);
   const [employeeUpdate, setEmployeeUpdate] = React.useState(null);
   const [employeeRevision, setEmployeeRevision] = React.useState(0);
+  const [employeeMode, setEmployeeMode] = React.useState('intake');
+  const [canEdit, setCanEdit] = React.useState(true);
   const [refreshVersion, setRefreshVersion] = React.useState(0);
 
   // Re-run the protected read whenever the requested step changes (Details ->
@@ -52,6 +72,8 @@ function useProtectedEmployeeRead(step) {
     setFiles([]);
     setEmployeeUpdate(null);
     setEmployeeRevision(0);
+    setEmployeeMode('intake');
+    setCanEdit(true);
 
     if (!bookId || !accessToken) {
       setState('missing');
@@ -91,6 +113,8 @@ function useProtectedEmployeeRead(step) {
           setFiles(Array.isArray(data.files) ? data.files : []);
           setEmployeeUpdate(data.employee_update || null);
           setEmployeeRevision(Number(data.employee_revision) || 0);
+          setEmployeeMode(String(data.employee_mode || 'intake'));
+          setCanEdit(data.can_edit !== false);
           setState('success');
         } else {
           setState('error');
@@ -101,7 +125,7 @@ function useProtectedEmployeeRead(step) {
     return () => { cancelled = true; };
   }, [step, refreshVersion]);
 
-  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, refresh: () => setRefreshVersion((value) => value + 1) };
+  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, employeeMode, canEdit, refresh: () => setRefreshVersion((value) => value + 1) };
 }
 
 function ProtectedReadGate() {
@@ -111,7 +135,7 @@ function ProtectedReadGate() {
   // authoritative on which step is unlocked for this access context.
   const initialStep = new URLSearchParams(window.location.search).get('step') || 'details';
   const [step, setStep] = React.useState(initialStep);
-  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, refresh } =
+  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, employeeMode, canEdit, refresh } =
     useProtectedEmployeeRead(step);
   React.useEffect(() => {
     const syncStep = () => {
@@ -158,6 +182,12 @@ function ProtectedReadGate() {
         ? React.createElement('p', { className: 'kdp-msg__status' }, 'HTTP status: ' + httpStatus)
         : null
     );
+  }
+
+  // Decision 69: the same employee link remains readable after submission,
+  // but mutation UI disappears until the authoritative state enters Employee Updates.
+  if (employeeMode === 'submitted' || canEdit === false) {
+    return React.createElement(SubmittedForReview, { book });
   }
 
   // success — hydrate the active step's form from the protected payload.
