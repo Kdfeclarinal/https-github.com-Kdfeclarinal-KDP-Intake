@@ -50,8 +50,8 @@ When security guidance conflicts, use:
 
 For current advisories, platform policies, authentication behavior, security headers, SDK changes, or other time-sensitive vendor behavior, verify current official documentation. If live research is unavailable, use the project's research handoff process instead of guessing.
 
-Product/workflow security requirements through Decision 67 are locked in
-[`docs/KDP_LOCKED_DECISIONS_1_67.md`](docs/KDP_LOCKED_DECISIONS_1_67.md).
+Product/workflow security requirements through Decision 70 are locked in
+[`docs/KDP_LOCKED_DECISIONS_1_70.md`](docs/KDP_LOCKED_DECISIONS_1_70.md).
 Its supersession and clarification rules govern older project notes; this file
 must not claim an unimplemented control is active.
 
