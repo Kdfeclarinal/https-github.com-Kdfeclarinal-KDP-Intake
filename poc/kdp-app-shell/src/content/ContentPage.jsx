@@ -326,6 +326,7 @@ function initContentState(book, saved) {
     coverOption: cover.option || '',
     coverHasFile: !!(cover.uploaded),
     aiChoice: ai.answer || legacyAi || '',
+    aiLegacyValue: legacyAi === 'yes' || legacyAi === 'no' ? legacyAi : '',
     aiTexts: ai.texts || '',
     aiImages: ai.images || '',
     aiTranslations: ai.translations || '',
@@ -339,6 +340,8 @@ function initContentState(book, saved) {
 function serializeAiContent(s) {
   const answer = serializeOptionalChoice(s.aiChoice, ['yes', 'no']);
   if (!answer) return '';
+  const hasDetails = Boolean(s.aiTexts || s.aiImages || s.aiTranslations);
+  if (s.aiLegacyValue === answer && !hasDetails) return answer;
   if (answer === 'no') return { answer: 'no', texts: null, images: null, translations: null };
   return {
     answer: 'yes',
@@ -382,14 +385,14 @@ function buildContentStateJson(s, saveType, activeStep, errs) {
 // Required-segment check for a COMPLETE (Save and Continue) submission only.
 // Returns { key: message } using the exact platform copy. Draft saves bypass this.
 // Preview is intentionally absent; ISBN/Publisher are optional and never block.
-function requiredErrors(s) {
+function requiredErrors(s, options = {}) {
   const errs = {};
   if (!s.manuscriptHasFile) errs.manuscript = REQUIRED_MSG.manuscript;
   if (!s.drmChoice) errs.drm = REQUIRED_MSG.drm;
   if (!s.coverHasFile) errs.cover = REQUIRED_MSG.cover;
   if (!s.aiChoice) {
     errs.ai_content = REQUIRED_MSG.ai_content;
-  } else if (s.aiChoice === 'yes') {
+  } else if (s.aiChoice === 'yes' && !(options.allowLegacyAiYes && s.aiLegacyValue === 'yes')) {
     const details = [s.aiTexts, s.aiImages, s.aiTranslations];
     if (details.some((value) => !value) || details.every((value) => value === 'none')) {
       errs.ai_content = AI_CONTENT_DETAIL_ERROR;
@@ -466,6 +469,7 @@ function safeUploadError(data, status, kind) {
 
 export function ContentPage({ book, stepName, bookId, accessToken, savedState, initialProgress, onNavigate, files, employeeRevision, onConcurrencyConflict }) {
   const [state, setState] = React.useState(() => initContentState(book, savedState));
+  const aiUpdateState = useEmployeeUpdateSection('AI-Generated Content');
   const cleanStateRef = React.useRef(JSON.stringify(state));
   const [serverProgress, setServerProgress] = React.useState(() => progressFromServer(initialProgress));
   const [validationErrors, setValidationErrors] = React.useState({});
@@ -605,7 +609,9 @@ export function ContentPage({ book, stepName, bookId, accessToken, savedState, i
     // Saved form booleans cannot complete Content after reconciliation has
     // removed a stale manuscript or cover.
     const stateForSave = authoritativeContentState(state, serverFiles);
-    const errs = saveType === 'complete' ? requiredErrors(stateForSave) : {};
+    const errs = saveType === 'complete'
+      ? requiredErrors(stateForSave, { allowLegacyAiYes: aiUpdateState.locked })
+      : {};
     if (saveType === 'complete' && Object.keys(errs).length > 0) {
       setValidationErrors(errs); // block completion; Pricing stays locked
       setFeedback(null);
