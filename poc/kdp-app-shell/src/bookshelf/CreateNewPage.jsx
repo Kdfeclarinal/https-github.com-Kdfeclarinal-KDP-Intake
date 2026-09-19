@@ -14,8 +14,10 @@ export function CreateNewPage({ onNavigate, canCreateBook, privilegedApi, onCrea
   const [notice, setNotice] = React.useState(null);
   const [mode, setMode] = React.useState('types');
   const [options, setOptions] = React.useState(null);
+  const [bookAuthor, setBookAuthor] = React.useState('');
   const [employeePersonId, setEmployeePersonId] = React.useState('');
   const [reviewerUserId, setReviewerUserId] = React.useState('');
+  const [dueDate, setDueDate] = React.useState('');
   const [busy, setBusy] = React.useState(false);
 
   async function selectType(type) {
@@ -29,8 +31,14 @@ export function CreateNewPage({ onNavigate, canCreateBook, privilegedApi, onCrea
         const loaded = await privilegedApi.call('loadCreateBookOptions', {});
         setOptions(loaded);
         setReviewerUserId(loaded.defaultReviewerId || '');
+        setDueDate(loaded.defaultDueDate || '');
         setMode('ebook');
-      } catch (error) { setNotice(userFacingError(error, 'Book setup could not be loaded. Try again.').message); }
+      } catch (error) {
+        const disconnected = error?.status === 503 && error?.message === 'Basecamp Pre-Press is not configured.';
+        setNotice(disconnected
+          ? 'Basecamp is not connected. Connect the Pre-Press integration in Settings before creating a book.'
+          : userFacingError(error, 'Book setup could not be loaded. Try again.').message);
+      }
       finally { setBusy(false); }
       return;
     }
@@ -39,10 +47,12 @@ export function CreateNewPage({ onNavigate, canCreateBook, privilegedApi, onCrea
 
   async function createBook(event) {
     event.preventDefault();
+    if (!bookAuthor.trim()) { setNotice('Enter the Book Author.'); return; }
     if (!employeePersonId || !reviewerUserId) { setNotice('Select an employee and reviewer.'); return; }
+    if (!dueDate) { setNotice('Select a due date.'); return; }
     setBusy(true); setNotice(null);
     try {
-      await privilegedApi.call('createPrivilegedBook', { employeePersonId, reviewerUserId });
+      await privilegedApi.call('createPrivilegedBook', { bookAuthor: bookAuthor.trim(), employeePersonId, reviewerUserId, dueDate });
       try { await onCreated(); }
       catch { setNotice('The book was created, but Bookshelf could not refresh. Return to Bookshelf and try again.'); setBusy(false); }
     } catch (error) { setNotice(userFacingError(error, 'The book could not be created. Try again.').message); setBusy(false); }
@@ -54,13 +64,17 @@ export function CreateNewPage({ onNavigate, canCreateBook, privilegedApi, onCrea
       h(BrandLogo, { className: 'kdp-brand-logo--create-new' })
     ),
     h('section', { className: 'kdp-create-new-content' },
-      h('div', { className: 'kdp-create-new-intro' }, h('h1', null, mode === 'ebook' ? 'Create Kindle eBook' : 'What would you like to create?'), h('p', null, mode === 'ebook' ? 'Assign the employee who will complete Intake and the eligible reviewer for this title.' : "Pick an option and we'll get you started. You can save your progress as you go.")),
+      h('div', { className: 'kdp-create-new-intro' }, h('h1', null, mode === 'ebook' ? 'Create Kindle eBook' : 'What would you like to create?'), h('p', null, mode === 'ebook' ? 'Set the operational Book Author, employee, reviewer, and Stage 1 due date for this title.' : "Pick an option and we'll get you started. You can save your progress as you go.")),
       notice ? h('div', { className: 'kdp-create-notice', role: 'status', 'aria-live': 'polite' }, notice) : null,
       mode === 'types'
         ? h('div', { className: 'kdp-create-grid' }, TYPES.map((type) => h('article', { className: `kdp-create-card${type.active ? ' is-active' : ''}`, key: type.id }, h('h2', null, type.title), h('span', { className: 'kdp-create-card__rule', 'aria-hidden': 'true' }), h('p', null, type.description), h('button', { type: 'button', disabled: busy, className: 'kdp-btn kdp-btn--primary', onClick: () => selectType(type) }, busy && type.active ? 'Loading…' : type.action))))
         : h('form', { className: 'kdp-create-book-form', onSubmit: createBook },
+            h('div', { className: 'kdp-create-book-form__fixed' }, h('span', null, 'Book Type'), h('strong', null, 'Kindle eBook')),
+            h('label', null, h('span', null, 'Book Author'), h('input', { type: 'text', value: bookAuthor, maxLength: 300, autoComplete: 'off', placeholder: 'e.g. Levi', onChange: (event) => setBookAuthor(event.target.value), required: true })),
             h('label', null, h('span', null, 'Employee'), h('select', { value: employeePersonId, onChange: (event) => setEmployeePersonId(event.target.value), required: true }, h('option', { value: '' }, 'Select a Pre-Press project member'), ...(options?.employees || []).map((employee) => h('option', { key: employee.id, value: employee.id }, employee.displayName)))),
             h('label', null, h('span', null, 'Reviewer'), h('select', { value: reviewerUserId, onChange: (event) => setReviewerUserId(event.target.value), required: true }, h('option', { value: '' }, 'Select an eligible reviewer'), ...(options?.reviewers || []).map((reviewer) => h('option', { key: reviewer.id, value: reviewer.id }, reviewer.displayName)))),
+            h('label', null, h('span', null, 'Due Date'), h('input', { type: 'date', value: dueDate, min: new Date().toISOString().slice(0, 10), onChange: (event) => setDueDate(event.target.value), required: true })),
+            h('p', { className: 'kdp-create-book-form__hint' }, `Default turnaround: ${options?.defaultTurnaround?.value || 7} calendar days. You can override this book only; future default changes will not alter existing due dates.`),
             h('p', { className: 'kdp-create-book-form__hint' }, 'The Kindle eBook record is created in KDP Intake first. Basecamp setup continues separately and can be retried if needed.'),
             h('div', { className: 'kdp-create-book-form__actions' },
               h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: busy, onClick: () => { setMode('types'); setNotice(null); } }, 'Back'),
