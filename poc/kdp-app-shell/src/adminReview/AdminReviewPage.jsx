@@ -1,6 +1,7 @@
 import React from 'react';
 import { KdpProgress } from '../progress/KdpProgress.jsx';
 import { userFacingError } from '../errors/userFacingError.js';
+import { PricingTermsReadOnly, SubmittedSectionBody } from './AdminSubmittedStep.jsx';
 import {
   createReviewDraft,
   filterReviewComments,
@@ -19,34 +20,16 @@ function labelKey(value) {
   return String(value || '').replaceAll('_', ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function presentValue(value) {
-  if (value === null || value === undefined || value === '') return 'Not answered';
-  if (value === true) return 'Yes';
-  if (value === false) return 'No';
-  if (Array.isArray(value)) return value.length ? value.map(presentValue).join(', ') : 'None selected';
-  return String(value);
-}
-
-function sectionData(item) {
-  const snapshot = item.snapshot || {};
-  if (Object.hasOwn(snapshot, 'value')) return snapshot.value;
-  const submitted = snapshot.submitted_step || {};
-  return submitted.sections?.[item.sectionKey]
-    ?? submitted.sections?.[item.section_key]
-    ?? snapshot.submitted_extracted_fields?.[String(item.sectionKey || '').split('.').pop()]
-    ?? {};
-}
-
-function ReadOnlyValue({ name, value, depth = 0 }) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    const entries = Object.entries(value).filter(([key]) => !['validationErrors', 'progressState', 'savedAt'].includes(key));
-    if (!entries.length) return h('div', { className: 'kdp-review-empty-value' }, 'No submitted value');
-    return h('div', { className: depth ? 'kdp-review-nested-values' : 'kdp-review-values' }, entries.map(([key, child]) => h(ReadOnlyValue, { key, name: key, value: child, depth: depth + 1 })));
-  }
-  return h('div', { className: 'kdp-review-field' },
-    h('span', { className: 'kdp-review-field__label' }, labelKey(name)),
-    h('div', { className: 'kdp-review-field__value', title: presentValue(value) }, presentValue(value))
-  );
+function reviewDisplayLabel(item) {
+  const key = String(item?.sectionKey || '').split('.').pop();
+  const labels = {
+    preview: 'Review Uploaded Files',
+    accessibility_features: 'Accessibility Features',
+    kdp_select_enrollment: 'KDP Select Enrollment',
+    primary_marketplace: item?.step === 'pricing' ? 'Primary marketplace' : 'Primary Marketplace',
+    royalty_distribution: 'Pricing, royalty, and distribution',
+  };
+  return labels[key] || item?.label || 'Review section';
 }
 
 function DecisionControl({ item, decision, onApprove, onReopen, disabled }) {
@@ -143,11 +126,12 @@ function CommentComposer({ sectionLabel, initialBody = '', title, onClose, onPos
       style: { transform: `translate(${position.x}px, ${position.y}px)` },
     },
     h('div', { className: 'kdp-review-composer__handle' },
-      h('h2', { id: 'review-comment-title', onPointerDown: startDrag, onPointerMove: moveDrag, onPointerUp: () => { drag.current = null; } }, title || (sectionLabel ? `Comment on ${sectionLabel}` : 'Add a general comment')),
+      h('h2', { id: 'review-comment-title', onPointerDown: startDrag, onPointerMove: moveDrag, onPointerUp: () => { drag.current = null; } }, title || 'ADD YOUR COMMENT'),
       h('button', { type: 'button', className: 'kdp-icon-button', onPointerUp: onClose, onClick: onClose, 'aria-label': 'Close comment composer' },
         h('svg', { viewBox: '0 0 20 20', 'aria-hidden': 'true' }, h('path', { d: 'm4 4 12 12M16 4 4 16' }))
       )
     ),
+    sectionLabel ? h('p', { className: 'kdp-review-composer__section' }, `Section: ${sectionLabel}`) : null,
     h('label', { className: 'kdp-review-composer__body' }, h('span', { className: 'kdp-sr-only' }, 'Comment'), h('textarea', { 'aria-label': 'Comment', value: body, onChange: (event) => setBody(event.target.value), placeholder: 'Describe what needs attention…', maxLength: 2000, autoFocus: true })),
     h('div', { className: 'kdp-review-composer__footer' }, h('span', null, `${body.length}/2000`), h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', onClick: () => { if (body.trim()) onPost({ body }); }, disabled: !body.trim(), 'aria-label': 'Post comment' }, 'Post'))
     )
@@ -164,7 +148,6 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
   const comments = filterReviewComments(draft.comments.filter((comment) => !comment.itemId || pageIds.has(comment.itemId)), { query, sort });
   const selectedIndex = Math.max(0, comments.findIndex((comment) => comment.id === activeItemId));
   const selected = comments[selectedIndex] || null;
-  const commentControls = commentMutationControls(selected || {}, !mutationControlsVisible);
   const decided = Object.values(draft.decisions).filter((decision) => decision !== 'pending').length;
 
   React.useEffect(() => { setFiltersOpen(false); }, [draft.step]);
@@ -190,22 +173,33 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
       )
     ),
     filtersOpen && !collapsed ? h('div', { className: 'kdp-review-filter' },
-      h('label', null, h('span', null, 'Comment contains'), h('input', { type: 'search', value: query, onChange: (event) => setQuery(event.target.value), placeholder: 'Search comments' })),
-      h('fieldset', null, h('legend', null, 'Sort comments by'), ['newest', 'oldest'].map((value) => h('label', { key: value }, h('input', { type: 'radio', name: 'comment-sort', value, checked: sort === value, onChange: () => setSort(value) }), value === 'newest' ? 'Newest comments' : 'Oldest comments')))
+      h('label', null, h('span', null, 'Comment contains'), h('input', { type: 'search', value: query, onChange: (event) => setQuery(event.target.value), placeholder: 'Comment Contains' })),
+      h('fieldset', null, h('legend', null, 'Sort comments by'), ['newest', 'oldest'].map((value) => h('label', { key: value }, h('input', { type: 'radio', name: 'comment-sort', value, checked: sort === value, onChange: () => setSort(value) }), value === 'newest' ? 'Latest Comment' : 'Oldest Comment')))
     ) : null,
     collapsed ? null : tab === 'comments'
       ? h('div', { className: 'kdp-review-panel__body' },
-          selected ? h('article', { className: 'kdp-review-comment' },
-            h('div', { className: 'kdp-review-comment__index' }, selected.issueNumber || '•'),
-            h('div', null, h('strong', null, selected.author), h('span', null, selected.itemId ? draft.items.find((item) => item.id === selected.itemId)?.label || 'Section comment' : 'General comment'), h('p', null, selected.body), h('time', null, new Date(selected.createdAt).toLocaleString()),
-              h(ContinuationContext, { continuation: selected.continuation }),
-              mutationControlsVisible ? h('div', { className: 'kdp-review-comment__actions' },
-                commentControls.reply ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onReply(selected) }, 'Reply') : null,
-                commentControls.edit ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onEdit(selected) }, 'Edit') : null,
-                commentControls.resolve ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onResolve(selected) }, 'Resolve') : null,
-                commentControls.delete ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onDelete(selected) }, 'Delete') : null
-              ) : null)
-          ) : h('div', { className: 'kdp-review-panel__empty' }, h('h3', null, 'No comments on this page'), h('p', null, 'Add a general note or comment directly on a section.')),
+          comments.length ? h('div', { className: 'kdp-review-comment-list' }, comments.map((comment) => {
+            const expanded = selected?.id === comment.id;
+            const controls = commentMutationControls(comment, !mutationControlsVisible);
+            const item = comment.itemId ? draft.items.find((candidate) => candidate.id === comment.itemId) : null;
+            return h('article', { className: `kdp-review-comment${expanded ? ' is-expanded' : ''}`, key: comment.id },
+              h('button', { type: 'button', className: 'kdp-review-comment__header', onClick: () => onSelect(comment), 'aria-expanded': expanded ? 'true' : 'false' },
+                h('span', { className: 'kdp-review-comment__index' }, comment.issueNumber || '•'),
+                h('span', { className: 'kdp-review-comment__who' }, h('strong', null, comment.author), h('small', null, comment.itemId ? reviewDisplayLabel(item) : 'General comment'))
+              ),
+              expanded ? h('div', { className: 'kdp-review-comment__detail' },
+                h('p', null, comment.body),
+                h('time', null, comment.createdAt ? new Date(comment.createdAt).toLocaleString() : 'Time unavailable'),
+                h(ContinuationContext, { continuation: comment.continuation }),
+                mutationControlsVisible ? h('div', { className: 'kdp-review-comment__actions' },
+                  controls.reply ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onReply(comment) }, 'Reply') : null,
+                  controls.edit ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onEdit(comment) }, 'Edit') : null,
+                  controls.resolve ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onResolve(comment) }, 'Resolve') : null,
+                  controls.delete ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onDelete(comment) }, 'Delete') : null
+                ) : null
+              ) : null
+            );
+          })) : h('div', { className: 'kdp-review-panel__empty' }, h('h3', null, 'No comments on this page'), h('p', null, 'Add a general note or comment directly on a section.')),
           mutationControlsVisible ? h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary kdp-review-panel__add', onClick: onAddGeneral }, 'Add Comment') : null
         )
       : h('div', { className: 'kdp-review-panel__body kdp-review-approvals' },
@@ -373,16 +367,17 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
         h('div', { className: 'kdp-admin-review__sections' }, draft.items.map((item) => {
           const issueNumber = reviewIssueNumber(draft.comments, item.id);
           return h('section', { className: `kdp-section kdp-admin-review-section${jumpItemId === item.id ? ' is-jump-target' : ''}`, key: item.id, ref: (node) => { if (node) sectionRefs.current.set(item.id, node); else sectionRefs.current.delete(item.id); } },
-            h('div', { className: 'kdp-section-label' }, h('span', null, item.label), issueNumber ? h('button', { type: 'button', className: 'kdp-review-marker', onClick: () => selectComment(draft.comments.find((comment) => comment.itemId === item.id)), 'aria-label': `Open comment ${issueNumber} for ${item.label}` }, issueNumber) : null),
-            h('div', { className: 'kdp-section-content kdp-review-readonly', tabIndex: mutationControlsVisible && !controlsDisabled ? 0 : undefined, role: mutationControlsVisible && !controlsDisabled ? 'button' : undefined, 'aria-label': mutationControlsVisible && !controlsDisabled ? `Comment on ${item.label}` : undefined, onClick: mutationControlsVisible && !controlsDisabled ? () => setComposer({ mode: 'comment', itemId: item.id }) : undefined, onKeyDown: mutationControlsVisible && !controlsDisabled ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setComposer({ mode: 'comment', itemId: item.id }); } } : undefined },
-              h(ReadOnlyValue, { name: item.label, value: sectionData(item) }),
-              mutationControlsVisible ? h('button', { type: 'button', disabled: controlsDisabled, className: 'kdp-link-button kdp-review-add-section-comment', onClick: (event) => { event.stopPropagation(); setComposer({ mode: 'comment', itemId: item.id }); }, 'aria-label': `Add comment to ${item.label}` }, '+ Add section comment') : null
+            h('div', { className: 'kdp-section-label' }, h('span', null, reviewDisplayLabel(item)), issueNumber ? h('button', { type: 'button', className: 'kdp-review-marker', onClick: () => selectComment(draft.comments.find((comment) => comment.itemId === item.id)), 'aria-label': `Open comment ${issueNumber} for ${reviewDisplayLabel(item)}` }, issueNumber) : null),
+            h('div', { className: 'kdp-section-content kdp-review-readonly', tabIndex: mutationControlsVisible && !controlsDisabled ? 0 : undefined, role: mutationControlsVisible && !controlsDisabled ? 'button' : undefined, 'aria-label': mutationControlsVisible && !controlsDisabled ? `Comment on ${reviewDisplayLabel(item)}` : undefined, onClick: mutationControlsVisible && !controlsDisabled ? () => setComposer({ mode: 'comment', itemId: item.id }) : undefined, onKeyDown: mutationControlsVisible && !controlsDisabled ? (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setComposer({ mode: 'comment', itemId: item.id }); } } : undefined },
+              h(SubmittedSectionBody, { item, submittedSteps: reviewPayload.submittedSteps, files: reviewPayload.files }),
+              mutationControlsVisible ? h('button', { type: 'button', disabled: controlsDisabled, className: 'kdp-link-button kdp-review-add-section-comment', onClick: (event) => { event.stopPropagation(); setComposer({ mode: 'comment', itemId: item.id }); }, 'aria-label': `Add comment to ${reviewDisplayLabel(item)}` }, '+ Add section comment') : null
             ),
             mutationControlsVisible
               ? h('div', { onClick: (event) => event.stopPropagation() }, h(DecisionControl, { item, decision: draft.decisions[item.id], disabled: controlsDisabled, onApprove: () => runAction('approve', { itemId: item.id }), onReopen: () => runAction('reopen', { itemId: item.id }) }))
               : h(HistoricalDecision, { decision: draft.decisions[item.id] })
           );
         })),
+        step === 'pricing' ? h(PricingTermsReadOnly) : null,
         h('footer', { className: 'kdp-admin-review__actions' },
           h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', onClick: step === 'details' ? onBackToBookshelf : () => navigateStep(STEPS[STEPS.indexOf(step) - 1]) }, step === 'details' ? 'Back to Bookshelf' : `Back to ${labelKey(STEPS[STEPS.indexOf(step) - 1])}`),
           h('div', null,

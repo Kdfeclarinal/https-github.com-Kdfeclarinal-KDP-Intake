@@ -433,7 +433,7 @@ test(
     );
 
     const updatesMatch =
-      /if \(decision === 'needs_updates'\) \{([\s\S]*?)\n  \}\n\n  return h\(/.exec(
+      /if \(decision === 'needs_updates'\) \{([\s\S]*?)\r?\n  \}\r?\n\r?\n  return h\(/.exec(
         adminReviewPageSource
       );
 
