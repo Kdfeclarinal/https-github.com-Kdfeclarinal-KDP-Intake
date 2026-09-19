@@ -26,3 +26,18 @@ test('post-mutation reload uses the current continuation column', () => {
   assert.match(mutationEdge, /target_review_item_id/);
   assert.doesNotMatch(mutationEdge, /\btarget_item_id\b/);
 });
+
+
+test('Pricing protected read receives only the manuscript needed for delivery estimates', () => {
+  const loader = readFileSync(
+    new URL('../functions/loadEmployeePage/index.ts', import.meta.url),
+    'utf8',
+  );
+  const publicFile = readFileSync(
+    new URL('../functions/loadEmployeePage/_publicFile.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(loader, /stepName === "pricing"[\s\S]*fileType === "manuscript"/);
+  assert.match(publicFile, /file_size:/);
+  assert.doesNotMatch(publicFile, /reviewstudio_file_id:/);
+});
