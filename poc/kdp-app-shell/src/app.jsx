@@ -258,7 +258,7 @@ function ProtectedReadGate() {
     return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(PricingPage, {
       key: `pricing:${employeeRevision}`,
       book, bookId, accessToken, savedState,
-      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate, employeeRevision, onConcurrencyConflict: refresh,
+      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate, employeeRevision, onConcurrencyConflict: refresh, onSubmitted: refresh,
     }));
   }
   return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(DetailsPage, {
