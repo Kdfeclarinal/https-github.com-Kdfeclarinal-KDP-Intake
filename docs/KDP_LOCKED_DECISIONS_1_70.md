@@ -1,4 +1,4 @@
-# KDP Locked Decisions 1–67
+# KDP Locked Decisions 1–70
 
 ## Authority
 
