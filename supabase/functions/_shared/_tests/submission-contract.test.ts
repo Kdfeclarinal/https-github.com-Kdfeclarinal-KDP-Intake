@@ -355,10 +355,8 @@ test(
       createReviewTodo: async (payload) => {
         actions.push("create");
 
-        assert.deepEqual(
-          payload.assignee_ids,
-          [9]
-        );
+        assert.deepEqual(payload.assignee_ids, [9]);
+        assert.equal(payload.content, "Review — Round 1");
 
         return {
           id: "review-todo",
@@ -375,8 +373,8 @@ test(
     });
 
     assert.deepEqual(actions, [
-      "complete",
       "create",
+      "complete",
     ]);
 
     assert.equal(
@@ -391,6 +389,29 @@ test(
       ),
       true
     );
+  }
+);
+
+test(
+  "missing reviewer mapping never completes the employee source task",
+  async () => {
+    let completed = false;
+    const result = await syncBasecampReviewRound({
+      round: { id: "round-1", roundNumber: 1, reviewerUserId: "reviewer-1" },
+      book: { id: "book-1", title: "Book" },
+      employeeReference: { todoId: "employee-todo", completedAt: null },
+      reviewReference: { id: "ref-1", todoListId: "list-1", todoId: null, attempts: 0 },
+      reviewerMapping: null,
+      projectPeople: [],
+      getTodo: async () => ({ id: "employee-todo", completed: false }),
+      completeTodo: async () => { completed = true; },
+      reconcileReviewTodo: async () => null,
+      createReviewTodo: async () => ({ id: "unexpected" }),
+      updateEmployeeReference: async () => {},
+      updateReviewReference: async () => {},
+    });
+    assert.equal(completed, false);
+    assert.equal(result.reason, "reviewer_mapping_required");
   }
 );
 

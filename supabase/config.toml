@@ -387,6 +387,9 @@ deno_version = 2
 [functions.loadEmployeePage]
 verify_jwt = false
 
+[functions.exchangeEmployeeAccess]
+verify_jwt = false
+
 [functions.saveEmployeeStep]
 verify_jwt = false
 

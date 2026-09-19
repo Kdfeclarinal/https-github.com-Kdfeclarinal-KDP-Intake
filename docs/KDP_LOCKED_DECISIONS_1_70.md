@@ -1,10 +1,10 @@
-# KDP Locked Decisions 1–67
+# KDP Locked Decisions 1–70
 
 ## Authority
 
-This file is the canonical product/workflow decision authority for KDP Intake through Decision 67. It supersedes partial brainstorming notes and earlier decision dumps where the supersession and clarification rules below refine them.
+This file is the canonical product/workflow decision authority for KDP Intake through Decision 70. It supersedes partial brainstorming notes and earlier decision dumps where the supersession and clarification rules below refine them.
 
-The supplied final handoff expresses Decisions 1–67 as a continuous locked sequence rather than separate numbered headings. Its product wording is preserved below. Do not invent Decision 68 for ordinary implementation details.
+The supplied final handoff expresses Decisions 1–67 as a continuous locked sequence rather than separate numbered headings. Decisions 68–70 below are later explicit product/workflow additions and refinements. Do not invent additional numbered decisions for ordinary implementation details.
 
 ## D7/D8 clarification
 
@@ -665,3 +665,110 @@ Preserve all existing security architecture and verify these through implementat
 - optimistic concurrency protects reviewer and employee writes
 - audit attribution survives reassignment, deletion, disabling and historical finalization
 - Basecamp or ReviewStudio failure must not corrupt/roll back canonical Supabase state
+
+
+---
+
+## Decision 68 — Basecamp task usability + internal book identity
+
+When a privileged user creates a book, the Create Book flow must also capture a required operational **Book Author** used to identify whose book/project it is before the employee completes authoritative KDP Details.
+
+Keep these concepts separate:
+
+- `Book Author` = privileged-creator operational identity for the book/project
+- `Assigned Employee` = person doing the intake work
+- `Reviewer` = eligible privileged reviewer from Supabase
+- `primary_author_name` = authoritative KDP author captured later during employee Details
+
+Create Book for Kindle eBook contains:
+
+```text
+Book Type
+Book Author
+Assigned Employee
+Reviewer
+Due Date
+
+[Create Book]
+```
+
+Basecamp-facing workflow is human-readable:
+
+```text
+<Book Author> — KDP Pre-Press
+    ↓
+KDP Pre-Press — Stage 1
+    ↓
+Review — Round 1
+    ↓
+KDP Pre-Press — Stage 2   [only when updates are requested]
+    ↓
+Review — Round 2
+```
+
+The internal Book ID remains a non-secret deterministic reconciliation/support marker and must not be the primary human-facing title or subtitle.
+
+On successful canonical Supabase book creation, Basecamp provisioning must:
+
+- create/reuse the book To-do List
+- create the Stage 1 KDP Pre-Press task
+- assign it to the selected employee
+- attach the resolved due date
+- provide the human-readable **Open KDP Intake** link
+- preserve the deterministic internal marker for idempotent reconciliation
+- never display a raw employee credential as visible text
+
+The employee launcher credential may appear temporarily in the initial deep link, but it must not remain a long-lived bearer credential in the visible browser URL throughout the session. Preferred behavior remains:
+
+```text
+Basecamp Open KDP Intake link
+→ scoped opaque employee credential
+→ backend validates book / employee / scope / expiry / revocation
+→ establish short-lived employee session
+→ remove/sanitize credential from visible URL
+→ continue on harmless book route/session
+```
+
+Preserve the existing security model:
+
+- credential scoped to one book/employee
+- revocable
+- expiry enforced
+- stale/reassigned employee access rejected
+- no raw credential printed in Basecamp
+
+Supabase remains canonical workflow authority. Basecamp remains an operational integration.
+
+## Decision 69 — Submitted employee link becomes read-only
+
+After a successful **Submit for Approval**, the same employee book link remains valid but changes to a read-only **Submitted for Review** experience.
+
+While the authoritative book state is `AWAITING_REVIEW` or `IN_REVIEW`:
+
+- no editable Details / Content / Pricing controls
+- no file upload or replacement controls
+- no Save Draft
+- no Save and Continue
+- no Submit for Approval
+- the employee may see submission/read-only status only
+
+The same employee book link becomes editable again only when authoritative workflow state enters `EMPLOYEE_UPDATES`.
+
+Approved/final states remain read-only.
+
+This is a UI/interaction rule in addition to the existing server-side mutation checks. The browser never becomes workflow authority.
+
+## Decision 70 — Configurable Stage 1 due date
+
+The initial employee-intake turnaround default is **7 calendar days**.
+
+Requirements:
+
+- the default is stored/configured server-side rather than permanently hard-coded into one UI
+- Create Book shows the resolved default due date
+- the privileged creator may override the due date for that book
+- the resolved due date is stored on the canonical book
+- Basecamp Stage 1 receives that resolved due date
+- changing the global default affects future books only
+- changing the global default never retroactively changes existing book or Basecamp task due dates
+- existing books are not backfilled merely because this decision is introduced

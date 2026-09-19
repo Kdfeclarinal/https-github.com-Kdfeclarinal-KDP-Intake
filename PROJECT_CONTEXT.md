@@ -33,13 +33,12 @@ The system is not production-ready until the remaining admin flow, finalization,
 
 ## Locked Product Authority
 
-[Decisions 1–67](docs/KDP_LOCKED_DECISIONS_1_67.md) are the current locked
+[Decisions 1–70](docs/KDP_LOCKED_DECISIONS_1_70.md) are the current locked
 product/workflow authority. Later numbered decisions and the document's
 supersession/clarification map govern where older notes differ. A review round
 may temporarily be unassigned while awaiting assignment; once assigned, exactly
 one active reviewer owns normal review mutations. Owner or a properly capable
-Tech Admin may deliberately reassign or take over. This is the approved D7/D8
-clarification, not Decision 68.
+Tech Admin may deliberately reassign or take over. This remains the approved D7/D8 clarification.
 
 The employee workflow continues to use book-scoped opaque authorization.
 Privileged Bookshelf and reviewer operations use Google authentication followed
@@ -96,7 +95,7 @@ Supabase is the canonical backend source of truth for:
 
 **Basecamp**
 - Supabase remains workflow authority; Basecamp is an asynchronous operational mirror only.
-- A local privileged Create Book slice now uses the configured Pre-Press project's active membership, commits the canonical Supabase book first, and then provisions one marked To-do List plus one Employee Intake task with reconcile-before-create retry behavior.
+- A local privileged Create Book slice now uses the configured Pre-Press project's active membership, commits the canonical Supabase book first, and then provisions one marked human-readable To-do List plus one `KDP Pre-Press — Stage 1` task with reconcile-before-create retry behavior.
 - OAuth state, account/project/todoset verification, server-only API access, token refresh boundaries, disconnect state, and sanitized Bookshelf provisioning status are implemented locally. The approved local token-at-rest adapter uses service-role-only Supabase Vault wrappers; live activation requires applying its migration.
 
 ---
@@ -436,8 +435,7 @@ The local closeout migration adds the eligible Owner fallback through an
 upgrade-safe wrapper so databases that already applied the submission foundation
 converge without rewriting migration history.
 
-After the canonical transaction commits, Basecamp completes the existing
-Employee Intake task and creates a distinct `Admin Review — Round 1` task.
+After the canonical transaction commits, Basecamp establishes a distinct `Review — Round 1` task and only then completes the existing employee-side Stage 1 task.
 Assignment requires a still-valid reviewer mapping and current project
 membership. Missing mapping, outage, or ambiguous response leaves retryable
 integration state and never rolls back Supabase workflow authority.

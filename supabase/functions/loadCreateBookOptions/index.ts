@@ -26,6 +26,15 @@ Deno.serve(async (request) => {
       listProjectPeople: () => runtime.getCollection(`projects/${connection.projectId}/people.json`),
       listEligibleReviewers: () => listEligibleReviewers(supabase),
       loadDefaultReviewerId: () => loadDefaultReviewerId(supabase),
+      loadWorkflowDefaults: async () => {
+        const { data, error } = await supabase.from("workflow_settings")
+          .select("setting_value")
+          .eq("setting_key", "kdp_workflow_defaults")
+          .eq("is_active", true)
+          .maybeSingle();
+        if (error) throw error;
+        return data?.setting_value || {};
+      },
     });
     return json({ ok: true, ...options });
   } catch (error) { return safeError(error); }

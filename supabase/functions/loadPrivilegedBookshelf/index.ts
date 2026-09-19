@@ -10,7 +10,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   status,
   headers: { ...CORS, 'Content-Type': 'application/json' },
 })
-const BOOK_FIELDS = 'id,book_title,primary_author_name,overall_status,updated_at,created_at,assigned_reviewer_user_id,reviewer_assignment_revision,latest_review_round_id,employee_basecamp_person_id,employee_name,employee_revision,deleted_at,deleted_by_privileged_user_id,trash_revision,basecamp_references(reference_kind,review_round_id,provisioning_status),integration_events(event_type,status,created_at)'
+const BOOK_FIELDS = 'id,book_title,book_author_name,primary_author_name,overall_status,updated_at,created_at,assigned_reviewer_user_id,reviewer_assignment_revision,latest_review_round_id,employee_basecamp_person_id,employee_name,employee_revision,deleted_at,deleted_by_privileged_user_id,trash_revision,basecamp_references(reference_kind,review_round_id,provisioning_status),integration_events(event_type,status,created_at)'
 const positiveHours = (value: string | undefined) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? number : null }
 
 Deno.serve(async (request) => {
@@ -76,9 +76,21 @@ Deno.serve(async (request) => {
         return data || []
       },
       listEligibleReviewerIds: async () => {
-        const { data: grants, error } = await supabase.from('privileged_user_capability_grants').select('privileged_user_id,privileged_users!inner(disabled_at)').eq('capability_key','can_review').is('revoked_at',null).is('privileged_users.disabled_at',null)
-        if (error) throw error
-        return [...new Set((grants || []).map((row) => row.privileged_user_id))]
+        const { data: grants, error: grantError } = await supabase
+          .from('privileged_user_capability_grants')
+          .select('privileged_user_id')
+          .eq('capability_key', 'can_review')
+          .is('revoked_at', null)
+        if (grantError) throw grantError
+        const ids = [...new Set((grants || []).map((row) => row.privileged_user_id).filter(Boolean))]
+        if (!ids.length) return []
+        const { data: users, error: userError } = await supabase
+          .from('privileged_users')
+          .select('id')
+          .in('id', ids)
+          .is('disabled_at', null)
+        if (userError) throw userError
+        return (users || []).map((row) => row.id)
       },
       listReviewerProfiles: async (ids: string[]) => {
         if (!ids.length) return []
@@ -88,7 +100,7 @@ Deno.serve(async (request) => {
       },
       listLatestFiles: async (bookIds: string[]) => {
         if (!bookIds.length) return []
-        const { data, error } = await supabase.from('book_files').select('book_id,file_type,file_name,reviewstudio_file_url,download_url,updated_at').in('book_id', bookIds).eq('is_latest', true)
+        const { data, error } = await supabase.from('book_files').select('book_id,file_type,file_name,reviewstudio_file_url,download_url,metadata,updated_at').in('book_id', bookIds).eq('is_latest', true)
         if (error) throw error
         return data || []
       },

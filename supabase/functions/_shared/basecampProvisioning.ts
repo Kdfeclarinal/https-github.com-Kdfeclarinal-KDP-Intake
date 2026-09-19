@@ -4,15 +4,39 @@ type Row = Record<string, any>;
 
 export const bookMarker = (bookId: string) => `KDP Intake Book: ${bookId}`;
 
-function escapeAttribute(value: string) {
-  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+function escapeHtml(value: unknown) {
+  return String(value || "").replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function calendarDate(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+export function normalizeEmployeeIntakeTurnaround(settings: Row = {}) {
+  const configured = settings?.employee_intake_turnaround || {};
+  const value = Number(configured.value);
+  return {
+    value: Number.isInteger(value) && value > 0 && value <= 365 ? value : 7,
+    unit: "calendar_days",
+  };
+}
+
+export function defaultEmployeeIntakeDueDate(policy: Row, now = Date.now()) {
+  const date = new Date(now);
+  const utc = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  utc.setUTCDate(utc.getUTCDate() + Number(policy.value || 7));
+  return calendarDate(utc);
 }
 
 export async function loadCreateBookOptions(deps: Row) {
   if (!deps.connection?.projectId) throw new BasecampError(503, "Basecamp Pre-Press is not configured.");
-  const [people, reviewers, defaultReviewerId] = await Promise.all([
-    deps.listProjectPeople(deps.connection), deps.listEligibleReviewers(), deps.loadDefaultReviewerId(),
+  const [people, reviewers, defaultReviewerId, workflowDefaults] = await Promise.all([
+    deps.listProjectPeople(deps.connection),
+    deps.listEligibleReviewers(),
+    deps.loadDefaultReviewerId(),
+    deps.loadWorkflowDefaults ? deps.loadWorkflowDefaults() : {},
   ]);
+  const defaultTurnaround = normalizeEmployeeIntakeTurnaround(workflowDefaults || {});
   return {
     employees: (people || []).filter((person: Row) => person?.id && person?.name).map((person: Row) => ({
       id: String(person.id), displayName: String(person.name), avatarUrl: person.avatar_url || null,
@@ -21,6 +45,8 @@ export async function loadCreateBookOptions(deps: Row) {
       id: String(user.id), displayName: String(user.display_name || "Reviewer"),
     })),
     defaultReviewerId: defaultReviewerId || null,
+    defaultTurnaround,
+    defaultDueDate: defaultEmployeeIntakeDueDate(defaultTurnaround, deps.now ?? Date.now()),
   };
 }
 
@@ -44,9 +70,10 @@ export async function provisionEmployeeIntake(deps: Row) {
       const existing = await deps.reconcileList(marker);
       if (existing?.id) listId = String(existing.id);
       else {
+        const author = String(deps.book.author || deps.book.title || "Untitled").trim() || "Untitled";
         const created = await deps.createTodoList({
-          name: deps.book.title && deps.book.title !== "Untitled" ? `KDP: ${deps.book.title}` : "KDP: New Kindle eBook",
-          description: `<div>${marker}</div>`,
+          name: `${author} — KDP Pre-Press`,
+          description: `<div><strong>Book Author:</strong> ${escapeHtml(author)}</div><div><small>Internal reference: ${escapeHtml(marker)}</small></div>`,
         });
         if (!created?.id) throw new BasecampError(502, "Basecamp returned an invalid To-do List.");
         listId = String(created.id);
@@ -57,12 +84,23 @@ export async function provisionEmployeeIntake(deps: Row) {
       const existing = await deps.reconcileTodo(listId, marker);
       if (existing?.id) todoId = String(existing.id);
       else {
-        const created = await deps.createTodo(listId, {
-          content: "Employee Intake",
-          description: `<div>Complete the Kindle eBook intake: <a href="${escapeAttribute(deps.employeeDeepLink)}">Open KDP Intake</a></div><div>${marker}</div>`,
+        const author = String(deps.book.author || deps.book.title || "Untitled").trim() || "Untitled";
+        const dueDate = deps.dueDate ? String(deps.dueDate) : "";
+        const payload: Row = {
+          content: "KDP Pre-Press — Stage 1",
+          description:
+            `<div><strong>Book Author:</strong> ${escapeHtml(author)}</div>` +
+            (dueDate ? `<div><strong>Due:</strong> ${escapeHtml(dueDate)}</div>` : "") +
+            `<div><a href="${escapeHtml(deps.employeeDeepLink)}">Open KDP Intake</a></div>` +
+            `<div><small>Internal reference: ${escapeHtml(marker)}</small></div>`,
           assignee_ids: [Number(deps.employeePersonId)],
-        });
-        if (!created?.id) throw new BasecampError(502, "Basecamp returned an invalid Employee Intake task.");
+        };
+        // Basecamp v3 create-todo accepts an ISO calendar date in due_on.
+        // Keep the canonical Supabase value authoritative and mirror the already
+        // resolved per-book date downstream without recalculating it.
+        if (dueDate) payload.due_on = dueDate;
+        const created = await deps.createTodo(listId, payload);
+        if (!created?.id) throw new BasecampError(502, "Basecamp returned an invalid KDP Pre-Press task.");
         todoId = String(created.id);
       }
       await deps.updateReference({ todo_id: todoId });

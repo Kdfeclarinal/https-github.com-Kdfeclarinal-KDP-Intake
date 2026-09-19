@@ -10,7 +10,14 @@ const fx = { ok: true, base: 'USD', source: 'Frankfurter / ECB reference rates',
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
   const context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
   const page = await context.newPage(); const saves = []; const submissions = [];
-  await page.route('**/functions/v1/loadEmployeePage', (route) => { const request = JSON.parse(route.request().postData() || '{}'); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload(request.step_name)) }); });
+  await page.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'fake-b', session_token: 'kdp_es_pricing', expires_at: '2099-01-01T00:00:00Z' }) }));
+  await page.route('**/functions/v1/loadEmployeePage', (route) => {
+    const request = JSON.parse(route.request().postData() || '{}');
+    const body = submissions.length
+      ? { ...payload(request.step_name), book: { ...payload(request.step_name).book, overall_status: 'AWAITING_REVIEW' }, employee_mode: 'submitted', can_edit: false }
+      : payload(request.step_name);
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  });
   await page.route('**/functions/v1/loadPricingFxRates', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fx) }));
   await page.route('**/functions/v1/saveEmployeeStep', (route) => { const request = JSON.parse(route.request().postData() || '{}'); saves.push(request); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, employee_revision: request.expected_revision + 1, data_valid: request.save_type === 'complete', progress_state: request.save_type === 'complete' ? { ...progress, steps: { ...progress.steps, pricing: { status: 'complete', isUnlocked: true, isComplete: true } } } : progress }) }); });
   await page.route('**/functions/v1/submitBookForApproval', (route) => { submissions.push(JSON.parse(route.request().postData() || '{}')); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, review_round_id: 'round-1', round_number: 1, overall_status: 'AWAITING_REVIEW', basecamp: { status: 'ready' } }) }); });
@@ -74,15 +81,16 @@ const fx = { ok: true, base: 'USD', source: 'Frankfurter / ECB reference rates',
 
   await page.locator('input[name="territories"]').nth(0).check();
   await page.getByRole('button', { name: 'Submit for Approval' }).dblclick();
-  await page.getByText('Submitted for approval.').waitFor();
+  await page.getByRole('heading', { name: 'Submitted for Review' }).waitFor();
   check(saves.at(-1).save_type === 'complete', 'Submit first requests authoritative complete Pricing save');
   check(submissions.length === 1, 'double click creates one submission request');
   check(Object.keys(submissions[0]).sort().join(',') === 'access_token,book_id,expected_revision', 'submission sends only book identity, opaque token, and authoritative revision');
-
-  check(await page.getByRole('button', { name: '< Back to Content' }).isDisabled(), 'authoritative submission locks post-submit Pricing navigation');
+  check(await page.locator('.kdp-app--pricing').count() === 0, 'successful submission immediately leaves the editable Pricing UI');
+  check(await page.getByRole('button', { name: /Save|Submit|Upload/i }).count() === 0, 'submitted state exposes no mutation action');
 
   const failureContext = await browser.newContext({ viewport: { width: 900, height: 800 } });
   const failurePage = await failureContext.newPage();
+  await failurePage.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'fake-b', session_token: 'kdp_es_pricing_failure', expires_at: '2099-01-01T00:00:00Z' }) }));
   await failurePage.route('**/functions/v1/loadEmployeePage', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload()) }));
   await failurePage.route('**/functions/v1/loadPricingFxRates', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false }) }));
   await failurePage.goto(`${BASE}/?book_id=fake-b&access_token=fake-t&step=pricing`);
@@ -93,6 +101,7 @@ const fx = { ok: true, base: 'USD', source: 'Frankfurter / ECB reference rates',
 
   const reducedContext = await browser.newContext({ viewport: { width: 390, height: 844 }, reducedMotion: 'reduce' });
   const reducedPage = await reducedContext.newPage();
+  await reducedPage.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'fake-b', session_token: 'kdp_es_pricing_reduced', expires_at: '2099-01-01T00:00:00Z' }) }));
   await reducedPage.route('**/functions/v1/loadEmployeePage', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(payload()) }));
   await reducedPage.route('**/functions/v1/loadPricingFxRates', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fx) }));
   await reducedPage.goto(`${BASE}/?book_id=fake-b&access_token=fake-t&step=pricing`); await reducedPage.waitForSelector('.kdp-app--pricing');

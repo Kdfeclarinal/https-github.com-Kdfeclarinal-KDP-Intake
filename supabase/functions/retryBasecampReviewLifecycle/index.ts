@@ -9,7 +9,7 @@ Deno.serve(async (request) => {
   if (request.method !== "POST") return json({ ok: false, error: "Method not allowed." }, 405);
   try {
     const supabase = serverClient();
-    const actor = await resolvePrivilegedActor({ ...privilegedDependencies(supabase), authorizationHeader: request.headers.get("Authorization"), requiredCapability: "can_assign_reviewer" });
+    const actor = await resolvePrivilegedActor({ ...privilegedDependencies(supabase), authorizationHeader: request.headers.get("Authorization"), requiredCapabilities: ["can_manage_integrations", "can_assign_reviewer"] });
     const body = await request.json().catch(() => ({}));
     const bookId = String(body.bookId || "");
     if (!/^[0-9a-f-]{36}$/i.test(bookId)) throw new BasecampError(400, "A valid book is required.");

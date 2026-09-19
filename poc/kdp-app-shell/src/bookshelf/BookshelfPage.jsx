@@ -107,6 +107,12 @@ export function BookshelfPage({ books = [], identity, canCreateBook, capabilitie
   }, []);
 
   const visibleBooks = filterAndSortBooks(books, { view, sort, filter, query });
+  const canRetryBasecamp = (book) => {
+    if (book.basecamp.retryKind === 'review_round') return capabilities.includes('can_manage_integrations') || capabilities.includes('can_assign_reviewer');
+    if (book.basecamp.retryKind === 'review_outcome') return capabilities.includes('can_finalize_book') || capabilities.includes('can_assign_reviewer');
+    if (book.basecamp.retryKind === 'employee_reassignment') return capabilities.includes('can_manage_users');
+    return capabilities.includes('can_create_book');
+  };
   const submitSearch = (event) => { event.preventDefault(); setQuery(searchDraft); setOpenMenu(null); };
   const retryBasecamp = async (book) => {
     setRetryingBookId(book.id); setIntegrationNotice(null);
@@ -140,7 +146,7 @@ export function BookshelfPage({ books = [], identity, canCreateBook, capabilitie
     ),
     h('section', { className: 'kdp-bookshelf-workspace', 'aria-labelledby': 'bookshelf-heading' },
       h('div', { className: 'kdp-bookshelf-heading-row' }, h('h2', { id: 'bookshelf-heading' }, 'Bookshelf'), books.length ? h('span', null, `${visibleBooks.length} of ${books.length} titles`) : null),
-      integrationNotice ? h('div', { className: 'kdp-create-notice', role: 'status' }, integrationNotice) : null,
+      integrationNotice ? h('div', { className: 'kdp-bookshelf-notice', role: 'status' }, integrationNotice) : null,
       h('form', { className: 'kdp-bookshelf-controls', onSubmit: submitSearch },
         h(Dropdown, { id: 'view', label: 'View', value: view, options: BOOKSHELF_VIEWS, open: openMenu === 'view', onOpen: setOpenMenu, onChange: setView }),
         h(Dropdown, { id: 'sort', label: 'Sort by', value: sort, options: BOOKSHELF_SORTS, open: openMenu === 'sort', onOpen: setOpenMenu, onChange: setSort }),
@@ -162,7 +168,7 @@ export function BookshelfPage({ books = [], identity, canCreateBook, capabilitie
               book.latestFiles.length ? h('div', { className: 'kdp-bookshelf-book__files' }, book.latestFiles.map((file) => file.url ? h('a', { key: `${file.fileType}-${file.fileName}`, href: file.url, target: '_blank', rel: 'noopener noreferrer' }, `${file.fileType || 'File'}: ${file.fileName}`) : h('span', { key: `${file.fileType}-${file.fileName}` }, `${file.fileType || 'File'}: ${file.fileName}`))) : h('span', { className: 'kdp-bookshelf-book__no-files' }, 'No current manuscript or cover file'),
               book.attention ? h('div', { className: `kdp-bookshelf-attention is-${book.attention.state}`, role: 'status' }, book.attention.state === 'escalated' ? 'Escalated attention' : 'Overdue', ` since ${formatDate(book.attention.since)}`) : null,
               book.deletedAt ? h('div', { className: 'kdp-bookshelf-intervention' }, `Moved to Trash ${formatDate(book.deletedAt)}${book.deletedBy ? ` by ${book.deletedBy}` : ''}`) : intervention ? h('div', { className: 'kdp-bookshelf-intervention', role: 'status' }, h('span', null, intervention === 'unassigned' ? 'Reviewer assignment required' : 'Current reviewer is ineligible'), canOpenSettings(capabilities) ? h('button', { type: 'button', className: 'kdp-link-button', onClick: () => onNavigate('settings') }, 'Manage assignment') : null) : null,
-              book.basecamp.status !== 'ready' ? h('div', { className: `kdp-bookshelf-integration kdp-bookshelf-integration--${book.basecamp.status}` }, h('span', null, book.basecamp.operatorIntervention ? 'Basecamp record needs operator follow-up' : book.basecamp.status === 'failed' ? 'Basecamp setup needs attention' : 'Basecamp setup is pending'), book.basecamp.retryAvailable ? h('button', { type: 'button', className: 'kdp-link-button', disabled: retryingBookId === book.id, onClick: () => retryBasecamp(book) }, retryingBookId === book.id ? 'Retrying…' : book.basecamp.retryKind === 'review_outcome' ? 'Retry outcome sync' : book.basecamp.retryKind === 'review_round' ? 'Retry review task' : book.basecamp.retryKind === 'employee_reassignment' ? 'Retry employee sync' : 'Retry setup') : null) : null
+              book.basecamp.status !== 'ready' ? h('div', { className: `kdp-bookshelf-integration kdp-bookshelf-integration--${book.basecamp.status}` }, h('span', null, book.basecamp.operatorIntervention ? 'Basecamp record needs operator follow-up' : book.basecamp.status === 'failed' ? 'Basecamp setup needs attention' : 'Basecamp setup is pending'), book.basecamp.retryAvailable && canRetryBasecamp(book) ? h('button', { type: 'button', className: 'kdp-link-button', disabled: retryingBookId === book.id, onClick: () => retryBasecamp(book) }, retryingBookId === book.id ? 'Retrying…' : book.basecamp.retryKind === 'review_outcome' ? 'Retry outcome sync' : book.basecamp.retryKind === 'review_round' ? 'Retry review task' : book.basecamp.retryKind === 'employee_reassignment' ? 'Retry employee sync' : 'Retry setup') : null) : null
             ),
             h('div', { className: 'kdp-bookshelf-book__actions' }, h(ManageMenu, { book, canManageTrash: capabilities.includes('can_manage_users'), open: openMenu === `manage-${book.id}`, onOpen: (id) => setOpenMenu(id ? `manage-${id}` : null), onRequestAction: (action, item) => { setOpenMenu(null); setTrashError(''); setActionRequest({ action, book: item }); } }), h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', disabled: Boolean(book.deletedAt) || !book.reviewAvailable, title: book.deletedAt ? 'Recover this title before opening it.' : book.reviewAvailable ? 'Open assigned admin review.' : 'No assigned active review is available.', onClick: !book.deletedAt && book.reviewAvailable ? () => onOpenReview(book.id) : undefined }, 'Open'))
           );

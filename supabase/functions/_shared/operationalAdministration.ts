@@ -137,6 +137,12 @@ export function sanitizeOperationalSettings(input: Row) {
       capabilities: [...new Set(mayManageUsers ? user.capabilities || [] : (user.capabilities || []).filter((item: string) => item === 'can_review'))].sort(),
     })),
     employees: (input.employees || []).map((employee: Row) => ({ id: String(employee.id), displayName: String(employee.displayName || ''), email: String(employee.email || '') })),
+    reviewerMappings: mayManageUsers ? (input.reviewerMappings || []).map((mapping: Row) => ({
+      reviewerId: String(mapping.privileged_user_id || ''),
+      personId: String(mapping.basecamp_person_id || ''),
+      displayName: String(mapping.display_name_snapshot || ''),
+      projectId: String(mapping.project_id || ''),
+    })).filter((mapping: Row) => mapping.reviewerId && mapping.personId) : [],
     defaultReviewerId: input.defaultReviewerId || null,
     integrations: {
       basecamp: { status: integrations.basecamp?.status || 'disconnected', projectId: integrations.basecamp?.projectId || null },

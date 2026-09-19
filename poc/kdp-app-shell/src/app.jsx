@@ -15,6 +15,32 @@ import { SettingsPage } from './settings/SettingsPage.jsx';
 // Stage B1: ONE protected employee read via the existing loadEmployeePage Edge Function.
 // READ ONLY. No write, no storage, no new dependency.
 const READ_ENDPOINT = 'https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/loadEmployeePage';
+const EXCHANGE_ENDPOINT = 'https://wpuexhsrhuxieobeanjr.supabase.co/functions/v1/exchangeEmployeeAccess';
+const employeeSessionKey = (bookId) => `kdp:employee-session:${bookId}`;
+
+function sanitizeEmployeeUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete('access_token');
+  window.history.replaceState({}, '', url);
+}
+
+function SubmittedForReview({ book }) {
+  const approved = ['approved', 'KDP_INTAKE_APPROVED'].includes(String(book?.overall_status || ''));
+  return React.createElement(
+    'main',
+    { className: 'kdp-app kdp-employee-readonly' },
+    React.createElement('section', { className: 'kdp-employee-readonly__card', role: 'status' },
+      React.createElement('span', { className: 'kdp-employee-readonly__eyebrow' }, approved ? 'KDP Intake complete' : 'KDP Intake submitted'),
+      React.createElement('h1', null, approved ? 'KDP Intake Approved' : 'Submitted for Review'),
+      React.createElement('p', null, approved
+        ? 'This intake has been approved and is read-only.'
+        : 'Your intake was submitted successfully and is now read-only while the reviewer is working.'),
+      React.createElement('p', { className: 'kdp-employee-readonly__hint' }, approved
+        ? 'No further employee changes are available from this link.'
+        : 'If updates are requested, this same book link will reopen the requested sections for you.')
+    )
+  );
+}
 
 function useProtectedEmployeeRead(step) {
   // 'loading' | 'missing' | 'success' | 'error'
@@ -34,6 +60,8 @@ function useProtectedEmployeeRead(step) {
   const [files, setFiles] = React.useState([]);
   const [employeeUpdate, setEmployeeUpdate] = React.useState(null);
   const [employeeRevision, setEmployeeRevision] = React.useState(0);
+  const [employeeMode, setEmployeeMode] = React.useState('intake');
+  const [canEdit, setCanEdit] = React.useState(true);
   const [refreshVersion, setRefreshVersion] = React.useState(0);
 
   // Re-run the protected read whenever the requested step changes (Details ->
@@ -41,8 +69,8 @@ function useProtectedEmployeeRead(step) {
   React.useEffect(() => {
     let cancelled = false;
     const params = new URLSearchParams(window.location.search);
-    const bookId = params.get('book_id');
-    const accessToken = params.get('access_token');
+    const requestedBookId = params.get('book_id');
+    const launcherToken = params.get('access_token');
 
     setState('loading');
     setBook(null);
@@ -52,56 +80,90 @@ function useProtectedEmployeeRead(step) {
     setFiles([]);
     setEmployeeUpdate(null);
     setEmployeeRevision(0);
+    setEmployeeMode('intake');
+    setCanEdit(true);
 
-    if (!bookId || !accessToken) {
+    if (!requestedBookId) {
       setState('missing');
       return;
     }
-    setBookId(bookId);
-    setAccessToken(accessToken);
-    // accessToken exists only in this closure, only long enough to make the request.
-    fetch(READ_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ book_id: bookId, access_token: accessToken, step_name: step }),
-    })
-      .then((res) => {
-        if (cancelled) return null;
-        setHttpStatus(res.status);
-        const ok = res.ok; // captured from the live Response before any async state update
-        return res.json().catch(() => null).then((data) => ({ ok, data }));
-      })
-      .then((result) => {
-        if (cancelled || !result) return;
-        const { ok, data } = result;
-        // Success requires a real 2xx response, the backend's own ok flag, and a book payload.
-        // Never trust only the browser; never let a blank display field fail the read.
-        if (ok === true && data && data.ok === true && data.book) {
-          setBook(data.book);
-          setStepName((data.step_name) || (data.step_data && data.step_data.step_name) || null);
-          // Hydration source for a previously-saved step form (when the backend
-          // returns it); absent on a fresh book. The real loadEmployeePage nests
-          // state_json under step_data; tolerate the legacy top-level shape too.
-          const sj = data.step_data && data.step_data.state_json ? data.step_data.state_json : data.state_json;
-          if (sj) setSavedState(sj);
-          if (data.progress_state) setProgressState(data.progress_state);
-          // T4: the live contract returns a top-level `files` array. Default
-          // to an empty list when absent so the Content page never treats
-          // an unknown field as a non-empty record.
-          setFiles(Array.isArray(data.files) ? data.files : []);
-          setEmployeeUpdate(data.employee_update || null);
-          setEmployeeRevision(Number(data.employee_revision) || 0);
-          setState('success');
-        } else {
+
+    setBookId(requestedBookId);
+
+    async function readEmployee(runtimeToken) {
+      const response = await fetch(READ_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ book_id: requestedBookId, access_token: runtimeToken, step_name: step }),
+      });
+      if (cancelled) return;
+      setHttpStatus(response.status);
+      const data = await response.json().catch(() => null);
+      if (cancelled) return;
+
+      if (response.ok === true && data?.ok === true && data.book) {
+        setBook(data.book);
+        setStepName(data.step_name || data.step_data?.step_name || null);
+        const sj = data.step_data?.state_json || data.state_json;
+        if (sj) setSavedState(sj);
+        if (data.progress_state) setProgressState(data.progress_state);
+        setFiles(Array.isArray(data.files) ? data.files : []);
+        setEmployeeUpdate(data.employee_update || null);
+        setEmployeeRevision(Number(data.employee_revision) || 0);
+        setEmployeeMode(String(data.employee_mode || 'intake'));
+        setCanEdit(data.can_edit !== false);
+        setState('success');
+        return;
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        sessionStorage.removeItem(employeeSessionKey(requestedBookId));
+      }
+      setState('error');
+    }
+
+    async function resolveEmployeeAccess() {
+      let runtimeToken = sessionStorage.getItem(employeeSessionKey(requestedBookId)) || '';
+
+      if (launcherToken) {
+        const response = await fetch(EXCHANGE_ENDPOINT, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ book_id: requestedBookId, access_token: launcherToken }),
+        });
+        if (cancelled) return;
+        setHttpStatus(response.status);
+        const data = await response.json().catch(() => null);
+        if (!response.ok || data?.ok !== true || !data.session_token) {
           setState('error');
+          return;
         }
-      })
-      .catch(() => { if (!cancelled) setState('error'); });
+
+        runtimeToken = String(data.session_token);
+        sessionStorage.setItem(employeeSessionKey(requestedBookId), runtimeToken);
+        // The Basecamp launcher credential is consumed only for exchange.
+        // Continue with the short-lived book-scoped session and remove the
+        // long-lived credential from the visible/history URL immediately.
+        sanitizeEmployeeUrl();
+      }
+
+      if (!runtimeToken) {
+        setState('missing');
+        return;
+      }
+
+      setAccessToken(runtimeToken);
+      await readEmployee(runtimeToken);
+    }
+
+    resolveEmployeeAccess().catch(() => {
+      if (!cancelled) setState('error');
+    });
 
     return () => { cancelled = true; };
   }, [step, refreshVersion]);
 
-  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, refresh: () => setRefreshVersion((value) => value + 1) };
+  return { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, employeeMode, canEdit, refresh: () => setRefreshVersion((value) => value + 1) };
 }
 
 function ProtectedReadGate() {
@@ -111,7 +173,7 @@ function ProtectedReadGate() {
   // authoritative on which step is unlocked for this access context.
   const initialStep = new URLSearchParams(window.location.search).get('step') || 'details';
   const [step, setStep] = React.useState(initialStep);
-  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, refresh } =
+  const { state, book, stepName, httpStatus, bookId, accessToken, savedState, progressState, files, employeeUpdate, employeeRevision, employeeMode, canEdit, refresh } =
     useProtectedEmployeeRead(step);
   React.useEffect(() => {
     const syncStep = () => {
@@ -160,6 +222,12 @@ function ProtectedReadGate() {
     );
   }
 
+  // Decision 69: the same employee link remains readable after submission,
+  // but mutation UI disappears until the authoritative state enters Employee Updates.
+  if (employeeMode === 'submitted' || canEdit === false) {
+    return React.createElement(SubmittedForReview, { book });
+  }
+
   // success — hydrate the active step's form from the protected payload.
   const navigate = (nextStep) => {
     if (nextStep === step || !['details', 'content', 'pricing'].includes(nextStep)) return;
@@ -190,7 +258,7 @@ function ProtectedReadGate() {
     return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(PricingPage, {
       key: `pricing:${employeeRevision}`,
       book, bookId, accessToken, savedState,
-      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate, employeeRevision, onConcurrencyConflict: refresh,
+      initialProgress: progressState, files, onNavigate: navigate, employeeUpdate, employeeRevision, onConcurrencyConflict: refresh, onSubmitted: refresh,
     }));
   }
   return React.createElement(EmployeeUpdateContext.Provider, { value: employeeUpdate }, React.createElement(EmployeeUpdateNotice, { context: employeeUpdate, bookId, accessToken, employeeRevision, onConcurrencyConflict: refresh }), React.createElement(DetailsPage, {

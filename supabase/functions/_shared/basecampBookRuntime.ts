@@ -7,6 +7,10 @@ function containsMarker(row: Row, marker: string) {
   return String(row?.description || "").includes(marker);
 }
 
+function isStageOneTodo(row: Row) {
+  return ["Employee Intake", "KDP Pre-Press — Stage 1"].includes(String(row?.content || ""));
+}
+
 async function loadMappedResource(runtime: Row, path: string) {
   try {
     return await runtime.getJson(path);
@@ -29,12 +33,12 @@ export async function confirmProvisioningMapping(runtime: Row, reference: Row, b
   let todo: Row | null = null;
   if (reference?.todo_id) {
     const mapped = await loadMappedResource(runtime, `todos/${reference.todo_id}.json`);
-    if (mapped && String(mapped.id) === String(reference.todo_id) && mapped.content === "Employee Intake" &&
+    if (mapped && String(mapped.id) === String(reference.todo_id) && isStageOneTodo(mapped) &&
       containsMarker(mapped, marker) && String(mapped.parent?.id) === String(list.id)) todo = mapped;
   }
   if (!todo) {
     const rows = await runtime.getCollection(`todolists/${list.id}/todos.json`);
-    todo = rows.find((row: Row) => row?.id && row?.content === "Employee Intake" && containsMarker(row, marker) &&
+    todo = rows.find((row: Row) => row?.id && isStageOneTodo(row) && containsMarker(row, marker) &&
       (!row.parent?.id || String(row.parent.id) === String(list.id))) || null;
   }
   return { listId: String(list.id), todoId: todo?.id ? String(todo.id) : null };
@@ -52,7 +56,7 @@ export function employeeDeepLink(base: string, bookId: string, rawToken: string)
 
 export async function loadBookProvisioningRecord(supabase: Row, bookId: string) {
   const { data: book, error: bookError } = await supabase.from("books")
-    .select("id,book_title,overall_status,employee_name,employee_basecamp_person_id,deleted_at")
+    .select("id,book_title,book_author_name,employee_intake_due_date,overall_status,employee_name,employee_basecamp_person_id,deleted_at")
     .eq("id", bookId).is("deleted_at", null).maybeSingle();
   if (bookError || !book) throw new BasecampError(404, "Book was not found.");
   const { data: reference, error: referenceError } = await supabase.from("basecamp_references")
@@ -72,13 +76,18 @@ export async function provisionBookWithRuntime(deps: Row) {
   }).select("id").maybeSingle();
   const result = await provisionEmployeeIntake({
     connection: deps.connection,
-    book: { id: deps.book.id, title: deps.book.book_title || deps.book.title || "Untitled" },
+    book: {
+      id: deps.book.id,
+      title: deps.book.book_title || deps.book.title || "Untitled",
+      author: deps.book.book_author_name || deps.book.author || deps.book.book_title || "Untitled",
+    },
     employeePersonId: deps.employeePersonId,
     employeeDeepLink: deps.employeeDeepLink,
+    dueDate: deps.book.employee_intake_due_date || deps.dueDate || null,
     reference: deps.reference,
     mappingConfirmed: deps.mappingConfirmed === true,
     reconcileList: async () => (await listRows()).find((row: Row) => containsMarker(row, marker)) || null,
-    reconcileTodo: async (listId: string) => (await todoRows(listId)).find((row: Row) => row?.content === "Employee Intake" && containsMarker(row, marker)) || null,
+    reconcileTodo: async (listId: string) => (await todoRows(listId)).find((row: Row) => isStageOneTodo(row) && containsMarker(row, marker)) || null,
     createTodoList: (payload: Row) => deps.runtime.postJson(`todosets/${deps.connection.todosetId}/todolists.json`, payload),
     createTodo: (listId: string, payload: Row) => deps.runtime.postJson(`todolists/${listId}/todos.json`, payload),
     updateReference: async (patch: Row) => {

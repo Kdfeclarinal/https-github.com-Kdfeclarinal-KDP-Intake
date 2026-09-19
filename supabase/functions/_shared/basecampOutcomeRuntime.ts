@@ -7,7 +7,7 @@ type Row = Record<string, any>
 export async function syncReviewOutcomeWithRuntime(supabase: Row, roundId: string, outcome: string) {
   const { data: round } = await supabase.from('book_review_rounds').select('id,book_id,round_number,outcome,finalized_at,reviewer_name_snapshot').eq('id', roundId).maybeSingle()
   if (!round?.finalized_at) throw new BasecampError(409, 'Review outcome is unavailable.')
-  const { data: book } = await supabase.from('books').select('id,employee_basecamp_person_id').eq('id', round.book_id).maybeSingle()
+  const { data: book } = await supabase.from('books').select('id,book_author_name,employee_basecamp_person_id').eq('id', round.book_id).maybeSingle()
   const { data: refs } = await supabase.from('basecamp_references').select('*').eq('book_id', round.book_id).in('reference_kind', ['review_round', 'employee_update'])
   const { data: requestedItems } = outcome === 'request_updates'
     ? await supabase.from('book_review_items').select('section_label').eq('review_round_id', round.id).eq('decision', 'needs_updates').order('sort_order', { ascending: true })
@@ -23,6 +23,7 @@ export async function syncReviewOutcomeWithRuntime(supabase: Row, roundId: strin
   const existing = outcome === 'request_updates' ? (await runtime.getCollection(`todolists/${reviewRef.todo_list_id}/todos.json`)).find((row: Row) => String(row.description || '').includes(employeeUpdateMarker(round.id))) : null
   return syncBasecampReviewOutcome({
     outcome, round: { id: round.id, roundNumber: round.round_number }, reviewerName: round.reviewer_name_snapshot,
+    bookAuthor: book?.book_author_name,
     requestedSections: (requestedItems || []).map((item: Row) => item.section_label), reviewTodo,
     existingEmployeeTodo: existing, employeePersonId: book?.employee_basecamp_person_id,
     completeTodo: (id: string) => runtime.postJson(`todos/${id}/completion.json`),
