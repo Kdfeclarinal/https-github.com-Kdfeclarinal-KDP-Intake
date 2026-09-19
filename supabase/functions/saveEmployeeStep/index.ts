@@ -267,6 +267,7 @@ Deno.serve(async (req) => {
     const stepMap = makeStepMap(stepRows);
     const existingStepRow = stepMap[stepName] || null;
 
+    let employeeUpdateEditableSectionKeys: string[] = [];
     if (["needs_updates", "EMPLOYEE_UPDATES"].includes(String(bookRow.overall_status))) {
       const { data: editableItems, error: editableError } = await supabase
         .from("book_review_items")
@@ -283,16 +284,16 @@ Deno.serve(async (req) => {
         .eq("step_name", stepName);
       if (reopenedError) throw reopenedError;
       try {
-        const editableSectionKeys = [...new Set([...(editableItems || []), ...(reopenedItems || [])].map((item) => String(item.section_key)))];
+        employeeUpdateEditableSectionKeys = [...new Set([...(editableItems || []), ...(reopenedItems || [])].map((item) => String(item.section_key)))];
         assertEmployeeUpdateSections(
           asObject(existingStepRow?.state_json),
           stateJson,
-          editableSectionKeys
+          employeeUpdateEditableSectionKeys
         );
         assertEmployeeUpdateExtractedFields(
           asObject(existingStepRow?.extracted_fields),
           extractedFields,
-          editableSectionKeys,
+          employeeUpdateEditableSectionKeys,
           stepName
         );
       } catch {
@@ -342,12 +343,22 @@ Deno.serve(async (req) => {
         : [];
     }
 
+    const existingAiValue = getSectionValue(asObject(existingStepRow?.state_json), "ai_content");
+    const aiSectionEditable = employeeUpdateEditableSectionKeys.some(
+      (key) => String(key).split(".").pop() === "ai_content"
+    );
+    const allowLegacyAiYes =
+      ["needs_updates", "EMPLOYEE_UPDATES"].includes(String(bookRow.overall_status))
+      && existingAiValue === "yes"
+      && !aiSectionEditable;
+
     const validation = validateStepData(
       stepName,
       stateJson,
       extractedFields,
       contentFiles,
-      cleanText(bookRow.primary_marketplace)
+      cleanText(bookRow.primary_marketplace),
+      allowLegacyAiYes
     );
 
     const authoritativeProgress = buildAuthoritativeProgressState(
@@ -941,14 +952,15 @@ function validateStepData(
   stateJson: JsonObject,
   extractedFields: JsonObject,
   contentFiles: JsonObject[],
-  authoritativePrimaryMarketplace: string
+  authoritativePrimaryMarketplace: string,
+  allowLegacyAiYes = false
 ): ValidationResult {
   if (stepName === "details") {
     return validateDetailsData(stateJson, extractedFields);
   }
 
   if (stepName === "content") {
-    return validateContentData(extractedFields, contentFiles);
+    return validateContentData(stateJson, extractedFields, contentFiles, allowLegacyAiYes);
   }
 
   return validatePricingData(stateJson, authoritativePrimaryMarketplace);
@@ -1082,8 +1094,10 @@ function hasStoredBookFile(
 }
 
 function validateContentData(
+  stateJson: JsonObject,
   extractedFields: JsonObject,
-  contentFiles: JsonObject[]
+  contentFiles: JsonObject[],
+  allowLegacyAiYes = false
 ): ValidationResult {
   const errors: Record<string, string> = {};
   const requiredKeys = getCanonicalRequiredKeys("content");
@@ -1099,7 +1113,7 @@ function validateContentData(
 
   const drm = cleanText(extractedFields.drm);
   const accessibility = cleanText(extractedFields.accessibility);
-  const aiRaw = extractedFields.ai_generated_content;
+  const aiRaw = getSectionValue(stateJson, "ai_content");
   const aiObject = asObject(aiRaw);
   const aiAnswer = cleanText(
     typeof aiRaw === "string"
@@ -1131,7 +1145,7 @@ function validateContentData(
 
   if (!aiAnswer) {
     errors["content.ai_content"] = "Answer the AI-generated content question.";
-  } else if (aiAnswer === "yes") {
+  } else if (aiAnswer === "yes" && !(allowLegacyAiYes && typeof aiRaw === "string")) {
     const complete = aiAllowedText.has(aiTexts)
       && aiAllowedImages.has(aiImages)
       && aiAllowedText.has(aiTranslations);
