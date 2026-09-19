@@ -10,7 +10,7 @@ const css = readFileSync(new URL('../src/app.css', import.meta.url), 'utf8');
 
 test('comment collapse keeps headers visible and uses icon actions', () => {
   assert.match(adminPage, /commentsCollapsed/);
-  assert.match(adminPage, /const expanded = !commentsCollapsed \|\| selected\?\.id === comment\.id/);
+  assert.match(adminPage, /const expanded = !commentsCollapsed \|\| collapsedExpandedId === comment\.id/);
   assert.doesNotMatch(adminPage, /collapsed \? null : tab === 'comments'/);
   for (const label of ['Reply to comment', 'Edit comment', 'Resolve comment', 'Delete comment']) {
     assert.ok(adminPage.includes(label), `missing accessible icon action: ${label}`);
