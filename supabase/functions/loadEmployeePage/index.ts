@@ -8,6 +8,7 @@ import {
 } from "./_authorization.ts";
 import { sanitizeEmployeeUpdateContext } from "../_shared/employeeUpdates.ts";
 import { publicEmployeeFile } from "./_publicFile.ts";
+import { isEmployeeEditableBookStatus } from "../_shared/workflowStatus.mjs";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -380,7 +381,13 @@ Deno.serve(async (request) => {
         files: normalizedFiles.map(publicEmployeeFile),
         progress_state: bookRow.progress_state || null,
         employee_revision: Number(bookRow.employee_revision) || 0,
-        employee_update: employeeUpdate
+        employee_update: employeeUpdate,
+        employee_mode: ["needs_updates", "EMPLOYEE_UPDATES"].includes(String(bookRow.overall_status))
+          ? "employee_updates"
+          : isEmployeeEditableBookStatus(bookRow.overall_status)
+            ? "intake"
+            : "submitted",
+        can_edit: isEmployeeEditableBookStatus(bookRow.overall_status)
       },
       200
     );
