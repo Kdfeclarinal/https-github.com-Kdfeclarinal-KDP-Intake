@@ -128,7 +128,7 @@ test(
 
     assert.match(
       retry,
-      /requiredCapability: "can_assign_reviewer"/
+      /requiredCapabilities:\s*\["can_manage_integrations",\s*"can_assign_reviewer"\]/
     );
 
     assert.match(
