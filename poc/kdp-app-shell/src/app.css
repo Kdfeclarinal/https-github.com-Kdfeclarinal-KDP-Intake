@@ -3068,9 +3068,14 @@ a.kdp-btn:focus {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #0797c9;
+  background: #c8cccc;
   color: #fff;
   font-weight: 700;
+  transition: background-color 160ms ease;
+}
+
+.kdp-review-comment.is-expanded .kdp-review-comment__index {
+  background: #0797c9;
 }
 
 .kdp-review-comment__who {
@@ -3113,6 +3118,34 @@ a.kdp-btn:focus {
   flex-wrap: wrap;
   gap: 12px;
   margin-top: 14px;
+}
+
+.kdp-review-comment__icon-action {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #5f6666;
+  cursor: pointer;
+}
+
+.kdp-review-comment__icon-action:hover {
+  background: #f0f2f2;
+  color: #222;
+}
+
+.kdp-review-comment__icon-action:focus-visible {
+  outline: 2px solid var(--kdp-link);
+  outline-offset: 2px;
+}
+
+.kdp-review-comment__icon-action svg {
+  width: 22px;
+  height: 22px;
 }
 
 .kdp-review-panel__add {
