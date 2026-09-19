@@ -32,7 +32,7 @@ function reviewDisplayLabel(item) {
   return labels[key] || item?.label || 'Review section';
 }
 
-function DecisionControl({ item, decision, onApprove, onReopen, disabled }) {
+function DecisionControl({ item, decision, onApprove, onReopen, disabled, pendingAction }) {
   if (decision === 'approved') {
     return h(
       'div',
@@ -49,7 +49,7 @@ function DecisionControl({ item, decision, onApprove, onReopen, disabled }) {
           disabled,
           onClick: onReopen,
         },
-        'Reopen Decision'
+        pendingAction === 'reopen' ? 'Reopening…' : 'Reopen Decision'
       )
     );
   }
@@ -75,7 +75,7 @@ function DecisionControl({ item, decision, onApprove, onReopen, disabled }) {
       onClick: onApprove,
       'aria-label': `APPROVE ${item.label}`,
     },
-    'APPROVE'
+    pendingAction === 'approve' ? 'Approving…' : 'APPROVE'
   );
 }
 
@@ -100,7 +100,7 @@ function ContinuationContext({ continuation }) {
   );
 }
 
-function CommentComposer({ sectionLabel, initialBody = '', title, onClose, onPost }) {
+function CommentComposer({ sectionLabel, initialBody = '', title, onClose, onPost, busy = false }) {
   const [body, setBody] = React.useState(initialBody);
   const [position, setPosition] = React.useState({ x: 0, y: 0 });
   const drag = React.useRef(null);
@@ -133,7 +133,7 @@ function CommentComposer({ sectionLabel, initialBody = '', title, onClose, onPos
     ),
     sectionLabel ? h('p', { className: 'kdp-review-composer__section' }, `Section: ${sectionLabel}`) : null,
     h('label', { className: 'kdp-review-composer__body' }, h('span', { className: 'kdp-sr-only' }, 'Comment'), h('textarea', { 'aria-label': 'Comment', value: body, onChange: (event) => setBody(event.target.value), placeholder: 'Describe what needs attention…', maxLength: 2000, autoFocus: true })),
-    h('div', { className: 'kdp-review-composer__footer' }, h('span', null, `${body.length}/2000`), h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', onClick: () => { if (body.trim()) onPost({ body }); }, disabled: !body.trim(), 'aria-label': 'Post comment' }, 'Post'))
+    h('div', { className: 'kdp-review-composer__footer' }, h('span', null, `${body.length}/2000`), h('button', { type: 'button', className: 'kdp-btn kdp-btn--secondary', onClick: () => { if (body.trim() && !busy) onPost({ body }); }, disabled: !body.trim() || busy, 'aria-label': 'Post comment' }, busy ? 'Posting…' : 'Post'))
     )
   );
 }
@@ -240,6 +240,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
   const [selectedCommentId, setSelectedCommentId] = React.useState(null);
   const [jumpItemId, setJumpItemId] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
+  const [pendingAction, setPendingAction] = React.useState(null);
   const [feedback, setFeedback] = React.useState(null);
   const [terminalAction, setTerminalAction] = React.useState(null);
   const sectionRefs = React.useRef(new Map());
@@ -258,7 +259,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
   const runAction = async (action, input = {}) => {
     const finalAction = action === 'request_updates' || action === 'approve_book';
     if (busy || !privilegedApi || (finalAction ? !reviewPayload.permissions?.canFinalize : !reviewPayload.permissions?.canMutate)) return false;
-    setBusy(true); setFeedback(null);
+    setBusy(true); setPendingAction({ action, itemId: input.itemId || null }); setFeedback(null);
     try {
       const next = await privilegedApi.call('mutatePrivilegedAdminReview', { bookId: reviewPayload.book.id, reviewRoundId: reviewPayload.reviewRound.id, expectedRevision: reviewPayload.reviewRound.revision, action, step, ...input });
       setReviewPayload(next);
@@ -274,7 +275,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
         setFeedback({ kind: 'error', text: userFacingError(error, 'The review action could not be completed. Try again.').message });
       }
       return false;
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setPendingAction(null); }
   };
 
   const navigateStep = async (nextStep) => {
@@ -373,7 +374,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
               mutationControlsVisible ? h('button', { type: 'button', disabled: controlsDisabled, className: 'kdp-link-button kdp-review-add-section-comment', onClick: (event) => { event.stopPropagation(); setComposer({ mode: 'comment', itemId: item.id }); }, 'aria-label': `Add comment to ${reviewDisplayLabel(item)}` }, '+ Add section comment') : null
             ),
             mutationControlsVisible
-              ? h('div', { onClick: (event) => event.stopPropagation() }, h(DecisionControl, { item, decision: draft.decisions[item.id], disabled: controlsDisabled, onApprove: () => runAction('approve', { itemId: item.id }), onReopen: () => runAction('reopen', { itemId: item.id }) }))
+              ? h('div', { onClick: (event) => event.stopPropagation() }, h(DecisionControl, { item, decision: draft.decisions[item.id], disabled: controlsDisabled, pendingAction: pendingAction?.itemId === item.id ? pendingAction.action : null, onApprove: () => runAction('approve', { itemId: item.id }), onReopen: () => runAction('reopen', { itemId: item.id }) }))
               : h(HistoricalDecision, { decision: draft.decisions[item.id] })
           );
         })),
@@ -398,7 +399,7 @@ export function AdminReviewPage({ payload, initialStep = 'details', onBackToBook
         onDelete: (comment) => runAction('delete_comment', { commentId: comment.id }),
       })
     ),
-    composer ? h(CommentComposer, { sectionLabel: composerItem?.label, title: composer.mode === 'reply' ? 'Reply to comment' : composer.mode === 'edit' ? 'Edit comment' : null, initialBody: composer.mode === 'edit' ? composer.comment.body : '', onClose: closeComposer, onPost: postComment }) : null,
+    composer ? h(CommentComposer, { sectionLabel: composerItem?.label, title: composer.mode === 'reply' ? 'Reply to comment' : composer.mode === 'edit' ? 'Edit comment' : null, initialBody: composer.mode === 'edit' ? composer.comment.body : '', onClose: closeComposer, onPost: postComment, busy }) : null,
     h(TerminalConfirmationDialog, { confirmation: terminalConfirmation, busy, onCancel: () => setTerminalAction(null), onConfirm: confirmTerminalAction })
   );
 }
