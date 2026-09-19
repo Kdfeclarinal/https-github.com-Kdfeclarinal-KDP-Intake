@@ -100,6 +100,7 @@ const EXTRACTED_FIELD_SECTIONS: Record<string, Record<string, string>> = {
   content: {
     drm: 'manuscript',
     cover_option: 'cover',
+    ai_generated_content: 'ai_content',
     accessibility: 'accessibility',
   },
 }
