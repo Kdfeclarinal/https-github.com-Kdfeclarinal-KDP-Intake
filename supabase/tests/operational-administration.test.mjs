@@ -110,17 +110,21 @@ test('employee reassignment validates project membership before canonical mutati
 test('settings serialization excludes credentials and exposes intervention metadata only', () => {
   const result = sanitizeOperationalSettings({
     actor: { id: 'actor', role_key: 'owner', capabilities: ['can_manage_users'] }, users: [], defaultReviewerId: null,
+    reviewerMappings: [{ privileged_user_id: 'reviewer', basecamp_person_id: '42', display_name_snapshot: 'Reviewer Person', project_id: 'project' }],
     integrations: { basecamp: { status: 'connected', projectId: '42', access_token: 'secret' }, reviewstudio: { configured: true, apiKey: 'secret' }, ghl: { configured: false, secret: 'secret' } },
   });
   assert.equal(JSON.stringify(result).includes('secret'), false);
   assert.deepEqual(result.integrations.basecamp, { status: 'connected', projectId: '42' });
+  assert.deepEqual(result.reviewerMappings, [{ reviewerId: 'reviewer', personId: '42', displayName: 'Reviewer Person', projectId: 'project' }]);
 
   const assignmentOnly = sanitizeOperationalSettings({
     actor: { id: 'assigner', role_key: 'tech_admin', capabilities: ['can_assign_reviewer'] },
     users: [{ id: 'reviewer', display_name: 'Reviewer', email_snapshot: 'private@example.test', role_key: 'reviewer', capabilities: ['can_review', 'can_manage_users'] }],
+    reviewerMappings: [{ privileged_user_id: 'reviewer', basecamp_person_id: '42' }],
   });
   assert.equal(assignmentOnly.users[0].email, '');
   assert.deepEqual(assignmentOnly.users[0].capabilities, ['can_review']);
+  assert.deepEqual(assignmentOnly.reviewerMappings, []);
 });
 
 test('Settings reports the same server-only ReviewStudio configuration used by upload and reconciliation', () => {
