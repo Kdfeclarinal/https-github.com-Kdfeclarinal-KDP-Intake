@@ -57,155 +57,81 @@ export async function syncBasecampReviewRound(deps: Row) {
   try {
     await deps.updateReviewReference({
       provisioning_status: "pending",
-      provisioning_attempts:
-        Number(
-          deps.reviewReference?.attempts || 0
-        ) + 1,
+      provisioning_attempts: Number(deps.reviewReference?.attempts || 0) + 1,
       last_provisioning_attempt_at: now,
       last_provisioning_error: null,
     });
 
-    /**
-     * employeeReference is intentionally the generic "source task"
-     * for the transition into this review round.
-     *
-     * Round 1:
-     *   Employee Intake
-     *
-     * Round 2+:
-     *   Employee Updates — previous round
-     */
-    if (!deps.employeeReference?.completedAt) {
-      const sourceTodo = await deps.getTodo(
-        deps.employeeReference?.todoId
-      );
-
-      if (!sourceTodo?.completed) {
-        await deps.completeTodo(
-          deps.employeeReference?.todoId
-        );
-      }
-
-      await deps.updateEmployeeReference({
-        source_todo_completed_at: now,
-      });
-    }
-
     if (!deps.round?.reviewerUserId) {
       await deps.updateReviewReference({
         provisioning_status: "failed",
-        last_provisioning_error:
-          "reviewer_required",
+        last_provisioning_error: "reviewer_required",
       });
-
-      return {
-        status: "pending",
-        retryAvailable: true,
-        reason: "reviewer_required",
-      };
+      return { status: "pending", retryAvailable: true, reason: "reviewer_required" };
     }
 
     const personId = deps.reviewerMapping?.personId
-      ? String(
-          deps.reviewerMapping.personId
-        )
+      ? String(deps.reviewerMapping.personId)
       : null;
 
     if (!personId) {
       await deps.updateReviewReference({
         provisioning_status: "failed",
-        last_provisioning_error:
-          "reviewer_mapping_required",
+        last_provisioning_error: "reviewer_mapping_required",
       });
-
-      return {
-        status: "pending",
-        retryAvailable: true,
-        reason: "reviewer_mapping_required",
-      };
+      return { status: "pending", retryAvailable: true, reason: "reviewer_mapping_required" };
     }
 
-    if (
-      !(deps.projectPeople || []).some(
-        (person: Row) =>
-          String(person?.id) === personId
-      )
-    ) {
+    if (!(deps.projectPeople || []).some((person: Row) => String(person?.id) === personId)) {
       await deps.updateReviewReference({
         provisioning_status: "failed",
-        last_provisioning_error:
-          "reviewer_mapping_stale",
+        last_provisioning_error: "reviewer_mapping_stale",
       });
-
-      return {
-        status: "pending",
-        retryAvailable: true,
-        reason: "reviewer_mapping_stale",
-      };
+      return { status: "pending", retryAvailable: true, reason: "reviewer_mapping_stale" };
     }
 
-    const existing =
-      await deps.reconcileReviewTodo(
-        reviewRoundMarker(deps.round.id)
-      );
-
-    let todoId = existing?.id
-      ? String(existing.id)
-      : null;
+    const existing = await deps.reconcileReviewTodo(reviewRoundMarker(deps.round.id));
+    let todoId = existing?.id ? String(existing.id) : null;
 
     if (!todoId) {
-      const created =
-        await deps.createReviewTodo({
-          content:
-            `Admin Review — Round ${deps.round.roundNumber}`,
-          description:
-            `<div>${reviewRoundMarker(
-              deps.round.id
-            )}</div>` +
-            `<div>${String(
-              deps.book?.title || "Untitled"
-            )}</div>`,
-          assignee_ids: [
-            Number(personId),
-          ],
-        });
+      const created = await deps.createReviewTodo({
+        content: `Review — Round ${deps.round.roundNumber}`,
+        description:
+          `<div>${String(deps.book?.title || "Untitled")}</div>` +
+          `<div><small>Internal reference: ${reviewRoundMarker(deps.round.id)}</small></div>`,
+        assignee_ids: [Number(personId)],
+      });
 
       if (!created?.id) {
-        throw new BasecampError(
-          502,
-          "Basecamp returned an invalid Admin Review task."
-        );
+        throw new BasecampError(502, "Basecamp returned an invalid Review task.");
       }
-
       todoId = String(created.id);
+    }
+
+    // Do not complete the employee-side source until the next Review task
+    // is confirmed. This keeps Basecamp operational continuity on failures.
+    if (!deps.employeeReference?.completedAt) {
+      const sourceTodo = await deps.getTodo(deps.employeeReference?.todoId);
+      if (!sourceTodo?.completed) {
+        await deps.completeTodo(deps.employeeReference?.todoId);
+      }
+      await deps.updateEmployeeReference({ source_todo_completed_at: now });
     }
 
     await deps.updateReviewReference({
       todo_id: todoId,
-      assigned_admin_person_id:
-        personId,
+      assigned_admin_person_id: personId,
       provisioning_status: "provisioned",
       last_provisioning_error: null,
     });
 
-    return {
-      status: "ready",
-      retryAvailable: false,
-    };
+    return { status: "ready", retryAvailable: false };
   } catch (error) {
-    const code =
-      error instanceof BasecampError
-        ? error.code
-        : "review_lifecycle_failed";
-
+    const code = error instanceof BasecampError ? error.code : "review_lifecycle_failed";
     await deps.updateReviewReference({
       provisioning_status: "failed",
       last_provisioning_error: code,
     });
-
-    return {
-      status: "failed",
-      retryAvailable: true,
-    };
+    return { status: "failed", retryAvailable: true };
   }
 }
