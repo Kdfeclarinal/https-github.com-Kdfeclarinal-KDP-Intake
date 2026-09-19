@@ -10,7 +10,8 @@ export function employeeUpdateSummary(deps: Row) {
   const sections = [...new Set((deps.requestedSections || []).map((value: unknown) => String(value || '').trim()).filter(Boolean))]
   const count = sections.length
   return [
-    `<div>${escapeHtml(employeeUpdateMarker(deps.round.id))}</div>`,
+    deps.bookAuthor ? `<p><strong>Book Author:</strong> ${escapeHtml(deps.bookAuthor)}</p>` : '',
+    `<div><small>Internal reference: ${escapeHtml(employeeUpdateMarker(deps.round.id))}</small></div>`,
     `<p><strong>Reviewer:</strong> ${escapeHtml(deps.reviewerName || 'Assigned reviewer')}</p>`,
     `<p><strong>${count} ${count === 1 ? 'section requires' : 'sections require'} updates:</strong> ${sections.length ? sections.map(escapeHtml).join(', ') : 'See the KDP Intake review.'}</p>`,
     '<p>Open the existing KDP Pre-Press link for the book to review requests, reply, make changes, and resubmit.</p>',
