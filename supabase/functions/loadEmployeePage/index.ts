@@ -605,8 +605,10 @@ function normalizeBookFile(
       "",
     file_size:
       fileRow.file_size ||
+      fileRow.file_size_bytes ||
       fileRow.size_bytes ||
       metadata.file_size ||
+      metadata.file_size_bytes ||
       metadata.size_bytes ||
       null,
     created_at: fileRow.created_at || null,
@@ -644,6 +646,12 @@ function shouldReturnFileForStep(
       fileType === "manuscript" ||
       fileType === "cover"
     );
+  }
+
+  // Pricing needs the current manuscript byte size to calculate KDP delivery
+  // estimates. The public file serializer still removes provider topology.
+  if (stepName === "pricing") {
+    return fileType === "manuscript";
   }
 
   return false;
