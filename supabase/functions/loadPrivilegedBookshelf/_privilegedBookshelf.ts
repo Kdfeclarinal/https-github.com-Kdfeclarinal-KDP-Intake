@@ -19,11 +19,15 @@ function deriveAttention(row: Row, policy: Row = {}, now = Date.now()) {
   return { state: Number.isFinite(escalationHours) && escalationHours > dueHours && elapsedHours >= escalationHours ? 'escalated' : 'overdue', since }
 }
 
+function safeHttpsUrl(value: unknown) {
+  const raw = String(value || '')
+  try { const parsed = new URL(raw); return parsed.protocol === 'https:' ? parsed.toString() : '' } catch { return '' }
+}
+
 function safeFile(row: Row) {
-  const rawUrl = String(row.download_url || row.reviewstudio_file_url || '')
-  let url = ''
-  try { const parsed = new URL(rawUrl); if (parsed.protocol === 'https:') url = parsed.toString() } catch { /* omit invalid resource URLs */ }
-  return { fileType: String(row.file_type || ''), fileName: String(row.file_name || ''), url }
+  const url = safeHttpsUrl(row.download_url || row.reviewstudio_file_url)
+  const previewUrl = safeHttpsUrl(row.metadata?.reviewstudio_response?.thumbnail_url)
+  return { fileType: String(row.file_type || ''), fileName: String(row.file_name || ''), url, previewUrl }
 }
 
 function bearer(header: string | null | undefined) {
@@ -73,6 +77,7 @@ export function sanitizeBook(row: Row, reviewerUserId?: string, capabilities: st
     reviewerName: row.reviewer_profile?.display_name || row.active_round?.reviewer_name_snapshot || '',
     employeeRevision: Number(row.employee_revision) || 0,
     latestFiles: (row.latest_files || []).map(safeFile).filter((file: Row) => file.fileName),
+    coverUrl: ((row.latest_files || []).map(safeFile).find((file: Row) => String(file.fileType).toLowerCase() === 'cover')?.previewUrl) || '',
     deletedAt: row.deleted_at || null,
     deletedBy: row.deleted_by_profile?.display_name || '',
     trashRevision: Number(row.trash_revision) || 0,
