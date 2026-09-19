@@ -27,7 +27,7 @@ test('Admin Review file controls open exact submitted ReviewStudio URLs', () => 
 });
 
 test('employee AI disclosure uses Select defaults and the exact all-None validation message', () => {
-  assert.match(contentPage, />Select</);
+  assert.match(contentPage, /h\('option', \{ value: '' \}, 'Select'\)/);
   assert.match(contentPage, /Texts/);
   assert.match(contentPage, /Images/);
   assert.match(contentPage, /Translations/);
