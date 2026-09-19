@@ -153,6 +153,7 @@ function ReviewActionIcon({ kind }) {
 function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onEdit, onResolve, onDelete, mutationControlsVisible }) {
   const [tab, setTab] = React.useState('comments');
   const [commentsCollapsed, setCommentsCollapsed] = React.useState(false);
+  const [collapsedExpandedId, setCollapsedExpandedId] = React.useState(null);
   const [filtersOpen, setFiltersOpen] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const [sort, setSort] = React.useState('newest');
@@ -165,11 +166,13 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
   React.useEffect(() => {
     setFiltersOpen(false);
     setCommentsCollapsed(false);
+    setCollapsedExpandedId(null);
   }, [draft.step]);
 
   const move = (direction) => {
     if (!comments.length) return;
     const index = (selectedIndex + direction + comments.length) % comments.length;
+    if (commentsCollapsed) setCollapsedExpandedId(comments[index].id);
     onSelect(comments[index]);
   };
 
@@ -189,7 +192,13 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
         h('button', {
           type: 'button',
           className: 'kdp-icon-button',
-          onClick: () => setCommentsCollapsed((value) => !value),
+          onClick: () => {
+            setCommentsCollapsed((value) => {
+              const next = !value;
+              if (next) setCollapsedExpandedId(null);
+              return next;
+            });
+          },
           'aria-label': commentsCollapsed ? 'Expand all comments' : 'Collapse all comments',
           'aria-pressed': commentsCollapsed ? 'true' : 'false',
         },
@@ -215,14 +224,17 @@ function ReviewPanel({ draft, activeItemId, onSelect, onAddGeneral, onReply, onE
     tab === 'comments'
       ? h('div', { className: 'kdp-review-panel__body' },
           comments.length ? h('div', { className: 'kdp-review-comment-list' }, comments.map((comment) => {
-            const expanded = !commentsCollapsed || selected?.id === comment.id;
+            const expanded = !commentsCollapsed || collapsedExpandedId === comment.id;
             const controls = commentMutationControls(comment, !mutationControlsVisible);
             const item = comment.itemId ? draft.items.find((candidate) => candidate.id === comment.itemId) : null;
             return h('article', { className: `kdp-review-comment${expanded ? ' is-expanded' : ' is-collapsed'}`, key: comment.id },
               h('button', {
                 type: 'button',
                 className: 'kdp-review-comment__header',
-                onClick: () => onSelect(comment),
+                onClick: () => {
+                  if (commentsCollapsed) setCollapsedExpandedId(comment.id);
+                  onSelect(comment);
+                },
                 'aria-expanded': expanded ? 'true' : 'false',
               },
                 h('span', { className: 'kdp-review-comment__index' }, comment.issueNumber || '•'),
