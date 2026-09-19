@@ -17,7 +17,17 @@ const MOCK_OK = {
   step_name: 'details',
 };
 
-function attachMock(page) {
+async function attachMock(page) {
+  await page.route('**/functions/v1/exchangeEmployeeAccess', (route) => {
+    const parsed = JSON.parse(route.request().postData() || '{}');
+    return route.fulfill({
+      status: parsed.book_id && parsed.access_token ? 200 : 400,
+      contentType: 'application/json',
+      body: JSON.stringify(parsed.book_id && parsed.access_token
+        ? { ok: true, book_id: parsed.book_id, session_token: 'kdp_es_local_session', expires_at: '2099-01-01T00:00:00Z' }
+        : { ok: false }),
+    });
+  });
   return page.route('**/functions/v1/loadEmployeePage', (route) => {
     const req = route.request();
     const body = req.postData();
