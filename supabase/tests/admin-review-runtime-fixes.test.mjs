@@ -16,3 +16,13 @@ test('current review comments support both section-bound and general comments', 
   assert.match(commentFix, /alter column step_name drop not null/i);
   assert.match(commentFix, /alter column section_key drop not null/i);
 });
+
+
+test('post-mutation reload uses the current continuation column', () => {
+  const mutationEdge = readFileSync(
+    new URL('../functions/mutatePrivilegedAdminReview/index.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(mutationEdge, /target_review_item_id/);
+  assert.doesNotMatch(mutationEdge, /\btarget_item_id\b/);
+});
