@@ -2525,9 +2525,12 @@ a.kdp-btn:focus {
 .kdp-create-card p { max-width: 30ch; min-height: 3em; margin: 0 0 28px; }
 .kdp-create-card .kdp-btn { margin-top: auto; }
 .kdp-create-book-form { display: grid; gap: 22px; width: min(100%, 620px); padding: 28px; border: 1px solid var(--kdp-section-divider); background: #fff; box-shadow: var(--kdp-shadow); }
-.kdp-create-book-form label > span { display: block; margin-bottom: 7px; font-weight: 700; }
-.kdp-create-book-form select { width: 100%; min-height: 44px; padding: 8px 38px 8px 12px; border: 1px solid var(--kdp-border); border-radius: var(--kdp-radius-sm); background: #f3f4f4; color: var(--kdp-text); font: inherit; }
-.kdp-create-book-form select:focus-visible { outline: 2px solid var(--kdp-link); outline-offset: 2px; }
+.kdp-create-book-form label > span, .kdp-create-book-form__fixed > span { display: block; margin-bottom: 7px; font-weight: 700; }
+.kdp-create-book-form select, .kdp-create-book-form input { width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--kdp-border); border-radius: var(--kdp-radius-sm); background: #f3f4f4; color: var(--kdp-text); font: inherit; }
+.kdp-create-book-form select { padding-right: 38px; }
+.kdp-create-book-form select:focus-visible, .kdp-create-book-form input:focus-visible { outline: 2px solid var(--kdp-link); outline-offset: 2px; }
+.kdp-create-book-form__fixed { padding: 12px 14px; border: 1px solid var(--kdp-section-divider); border-radius: var(--kdp-radius-sm); background: #f7fafa; }
+.kdp-create-book-form__fixed strong { font-size: 15px; }
 .kdp-create-book-form__hint { margin: 0; color: var(--kdp-muted); line-height: 1.5; }
 .kdp-create-book-form__actions { display: flex; justify-content: flex-end; gap: 12px; }
 
