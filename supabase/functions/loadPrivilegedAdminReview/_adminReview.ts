@@ -14,11 +14,17 @@ function decisionOf(row: Row) {
 function sanitizeItem(row: Row) {
   const source = row.section_snapshot && typeof row.section_snapshot === 'object' ? row.section_snapshot : {}
   const localKey = String(row.section_key || '').split('.').pop()
-  const sectionValue = source.value
+  const rawSectionValue = source.value
     ?? source.submitted_step?.sections?.[row.section_key]
     ?? source.submitted_step?.sections?.[localKey]
     ?? source.submitted_extracted_fields?.[String(row.section_key || '').split('.').pop()]
     ?? null
+  const sectionValue = rawSectionValue && typeof rawSectionValue === 'object'
+      && !Array.isArray(rawSectionValue)
+      && Object.prototype.hasOwnProperty.call(rawSectionValue, 'sectionKey')
+      && Object.prototype.hasOwnProperty.call(rawSectionValue, 'value')
+    ? rawSectionValue.value
+    : rawSectionValue
   return {
     id: row.id,
     step: row.step_name,
@@ -97,6 +103,73 @@ function sanitizeFiles(round: Row) {
   }).filter((file: Row) => file.fileName)
 }
 
+function snapshotSection(sections: Row, key: string) {
+  const entry = sections?.[key]
+  if (entry && typeof entry === 'object' && !Array.isArray(entry) && Object.prototype.hasOwnProperty.call(entry, 'value')) {
+    return entry.value
+  }
+  return entry ?? null
+}
+
+function sanitizeSubmittedSteps(round: Row) {
+  const steps = round.submission_snapshot?.steps || {}
+  const detailsSections = steps.details?.state_json?.sections || {}
+  const contentSections = steps.content?.state_json?.sections || {}
+  const pricingSections = steps.pricing?.state_json?.sections || {}
+
+  const authorEntry = detailsSections.primary_author || {}
+  const rightsEntry = detailsSections.publishing_rights || {}
+  const adultEntry = detailsSections.adult_question || {}
+  const ageEntry = detailsSections.age_grade_range || {}
+
+  return {
+    details: {
+      language: snapshotSection(detailsSections, 'language'),
+      book_title: snapshotSection(detailsSections, 'book_title'),
+      subtitle: snapshotSection(detailsSections, 'subtitle'),
+      series: snapshotSection(detailsSections, 'series'),
+      edition_number: snapshotSection(detailsSections, 'edition_number'),
+      author: {
+        value: snapshotSection(detailsSections, 'primary_author'),
+        firstName: String(authorEntry?.fields?.author_first_name || ''),
+        lastName: String(authorEntry?.fields?.author_last_name || ''),
+      },
+      contributors: snapshotSection(detailsSections, 'contributors'),
+      description: snapshotSection(detailsSections, 'description'),
+      publishingRights: {
+        value: snapshotSection(detailsSections, 'publishing_rights'),
+        label: String(rightsEntry?.label || ''),
+      },
+      primaryAudience: {
+        adult: snapshotSection(detailsSections, 'adult_question'),
+        adultLabel: String(adultEntry?.label || ''),
+        age: {
+          min: String(ageEntry?.fields?.reading_age_min ?? snapshotSection(detailsSections, 'age_grade_range')?.reading_age_min ?? ''),
+          max: String(ageEntry?.fields?.reading_age_max ?? snapshotSection(detailsSections, 'age_grade_range')?.reading_age_max ?? ''),
+        },
+      },
+      primary_marketplace: snapshotSection(detailsSections, 'primary_marketplace'),
+      categories: snapshotSection(detailsSections, 'categories'),
+      keywords: snapshotSection(detailsSections, 'keywords'),
+      preorder: snapshotSection(detailsSections, 'preorder'),
+    },
+    content: {
+      manuscript: snapshotSection(contentSections, 'manuscript'),
+      cover: snapshotSection(contentSections, 'cover'),
+      aiGenerated: snapshotSection(contentSections, 'ai_content'),
+      preview: snapshotSection(contentSections, 'preview'),
+      isbn: snapshotSection(contentSections, 'isbn'),
+      accessibility: snapshotSection(contentSections, 'accessibility'),
+    },
+    pricing: {
+      kdpSelect: pricingSections.kdp_select || null,
+      territories: pricingSections.territories || null,
+      primaryMarketplace: pricingSections.primary_marketplace?.value || pricingSections.primary_marketplace || null,
+      royalty: pricingSections.royalty_and_pricing || null,
+    },
+  }
+}
+
 export async function resolvePrivilegedAdminReview(deps: Row, bookId: unknown, requestedRoundId?: unknown) {
   try {
     const normalizedBookId = String(bookId || '').trim()
@@ -149,6 +222,7 @@ export async function resolvePrivilegedAdminReview(deps: Row, bookId: unknown, r
         items: (items || []).filter((row: Row) => row.is_reviewable !== false).map(sanitizeItem).sort((a: Row, b: Row) => a.sortOrder - b.sortOrder),
         comments: (comments || []).map((row: Row) => sanitizeComment(row, continuations, actor.id, canMutate)),
         files: sanitizeFiles(round),
+        submittedSteps: sanitizeSubmittedSteps(round),
         roundHistory: (rounds || []).map((entry: Row) => ({ id: entry.id, roundNumber: Number(entry.round_number) || 1, status: entry.status, outcome: entry.outcome || null, finalizedAt: entry.finalized_at || null })),
         permissions: { canMutate, canFinalize: isLatest && !round.finalized_at && actor.capabilities.includes('can_finalize_book') && (canObserveAssigned || actor.capabilities.includes('can_reassign_reviewer') || actor.capabilities.includes('can_manage_users')) },
       },
