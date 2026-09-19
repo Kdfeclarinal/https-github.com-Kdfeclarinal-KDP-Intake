@@ -45,7 +45,7 @@ export async function syncReviewRoundWithRuntime(
   const { data: book, error: bookError } =
     await supabase
       .from("books")
-      .select("id,book_title")
+      .select("id,book_title,book_author_name")
       .eq("id", round.book_id)
       .maybeSingle();
 
@@ -244,8 +244,10 @@ export async function syncReviewRoundWithRuntime(
 
       book: {
         id: book.id,
-        title:
-          book.book_title,
+        title: [book.book_author_name, book.book_title].filter((value) => value && value !== "Untitled").join(" — ")
+          || book.book_author_name
+          || book.book_title
+          || "Untitled",
       },
 
       /*
