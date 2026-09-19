@@ -58,7 +58,7 @@ export function sanitizeBook(row: Row, reviewerUserId?: string, capabilities: st
   return {
     id: row.id,
     title: row.book_title || 'Untitled',
-    author: row.primary_author_name || '',
+    author: row.primary_author_name || row.book_author_name || '',
     type: 'Kindle eBook',
     status: row.overall_status,
     updatedAt: row.updated_at || null,
