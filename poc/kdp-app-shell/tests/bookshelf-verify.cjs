@@ -67,7 +67,7 @@ async function holdForHumanTrial(browser) {
       { id: 'b-unassigned', title: 'Awaiting reviewer assignment', author: 'Fixture Author', type: 'Kindle eBook', status: 'AWAITING_REVIEW', activeReview: true, reviewerId: null, reviewerEligible: false, reviewAvailable: false, employeePersonId: 'person-1', employeeName: 'Pre-Press Employee', updatedAt: '2026-09-12T00:00:00Z', createdAt: '2026-09-12T00:00:00Z', basecamp: { status: 'ready', retryAvailable: false } },
       { id: 'b-warning', title: 'Outcome sync needs attention', author: 'Fixture Author', type: 'Kindle eBook', status: 'EMPLOYEE_UPDATES', activeReview: false, reviewerId: 'reviewer-1', reviewerEligible: true, reviewAvailable: false, employeePersonId: 'person-1', employeeName: 'Replacement Employee', updatedAt: '2026-09-13T00:00:00Z', createdAt: '2026-09-13T00:00:00Z', basecamp: { status: 'failed', retryAvailable: true, retryKind: 'review_outcome' } },
     );
-    if (bookshelfLoads > 1) books.unshift({ id: 'b-2', title: 'Untitled', author: '', type: 'Kindle eBook', status: 'draft', updatedAt: '2026-09-12T00:00:00Z', createdAt: '2026-09-12T00:00:00Z', basecamp: retryComplete ? { status: 'ready', retryAvailable: false } : { status: 'failed', retryAvailable: true } });
+    if (bookshelfLoads > 1) books.unshift({ id: 'b-2', title: 'Untitled', author: 'Levi', type: 'Kindle eBook', status: 'draft', updatedAt: '2026-09-12T00:00:00Z', createdAt: '2026-09-12T00:00:00Z', basecamp: retryComplete ? { status: 'ready', retryAvailable: false } : { status: 'failed', retryAvailable: true } });
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, capabilities: ['can_create_book', 'can_review', 'can_view_all_books', 'can_manage_users', 'can_change_default_reviewer', 'can_manage_integrations'], canViewBookshelf: true, canCreateBook: true, books }) });
   });
   await authorizedContext.route('https://project.supabase.co/functions/v1/loadOperationalSettings', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -89,10 +89,10 @@ async function holdForHumanTrial(browser) {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, reviewerId: body.reviewerId, basecampPerson: { id: body.personId, displayName: 'Pre-Press Employee' } }) });
   });
     await authorizedContext.route('https://project.supabase.co/functions/v1/loadPrivilegedAdminReview', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, identity: { displayName: 'Authorized Reviewer' }, book: { id: 'b-1', title: 'Authorized title', author: 'Known Author' }, reviewRound: { roundNumber: 1, status: 'in_review' }, items: [{ id: 'item-1', step: 'details', sectionKey: 'details.language', label: 'Language', sortOrder: 1, decision: 'pending', snapshot: { value: { value: 'English' } } }], comments: [], files: [], saveAvailable: false, finalizationAvailable: false }) }));
-  await authorizedContext.route('https://project.supabase.co/functions/v1/loadCreateBookOptions', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, employees: [{ id: 'person-1', displayName: 'Pre-Press Employee', avatarUrl: null }], reviewers: [{ id: 'reviewer-1', displayName: 'Eligible Reviewer' }], defaultReviewerId: 'reviewer-1' }) }));
+  await authorizedContext.route('https://project.supabase.co/functions/v1/loadCreateBookOptions', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, employees: [{ id: 'person-1', displayName: 'Pre-Press Employee', avatarUrl: null }], reviewers: [{ id: 'reviewer-1', displayName: 'Eligible Reviewer' }], defaultReviewerId: 'reviewer-1', defaultTurnaround: { value: 7, unit: 'calendar_days' }, defaultDueDate: '2026-09-26' }) }));
   await authorizedContext.route('https://project.supabase.co/functions/v1/createPrivilegedBook', async (route) => {
     const body = route.request().postDataJSON();
-    check(body.employeePersonId === 'person-1' && body.reviewerUserId === 'reviewer-1', 'Create submits selected identities without client authority claims');
+    check(body.bookAuthor === 'Levi' && body.employeePersonId === 'person-1' && body.reviewerUserId === 'reviewer-1' && body.dueDate === '2026-09-26', 'Create submits Book Author, selected identities, and resolved due date without client authority claims');
     return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ ok: true, book: { id: 'b-2', title: 'Untitled', status: 'draft' }, basecamp: { status: 'failed', retryAvailable: true } }) });
   });
   await authorizedContext.route('https://project.supabase.co/functions/v1/retryBasecampProvisioning', async (route) => {
@@ -155,8 +155,10 @@ async function holdForHumanTrial(browser) {
     authorized.getByRole('status').waitFor(),
   ]);
   check(await authorized.getByRole('heading', { name: 'Create Kindle eBook' }).count() === 1, `Create options load (${await authorized.getByRole('status').allTextContents()})`);
+  await authorized.getByLabel('Book Author').fill('Levi');
   await authorized.getByLabel('Employee').selectOption('person-1');
   check(await authorized.getByLabel('Reviewer').inputValue() === 'reviewer-1', 'configured default reviewer is selected');
+  check(await authorized.getByLabel('Due Date').inputValue() === '2026-09-26', 'Create Book preloads the authoritative seven-calendar-day due date');
   await authorized.getByRole('button', { name: 'Create Kindle eBook' }).click();
   await authorized.getByRole('heading', { name: 'Create. Manage. Publish.' }).waitFor();
   const createdBook = authorized.locator('.kdp-bookshelf-book').filter({ hasText: 'Untitled' });
