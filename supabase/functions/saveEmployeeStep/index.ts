@@ -698,6 +698,7 @@ function getCanonicalRequiredKeys(stepName: StepName): string[] {
       "content.manuscript",
       "content.drm",
       "content.cover",
+      "content.ai_content",
       "content.accessibility"
     ];
   }
@@ -1098,6 +1099,18 @@ function validateContentData(
 
   const drm = cleanText(extractedFields.drm);
   const accessibility = cleanText(extractedFields.accessibility);
+  const aiRaw = extractedFields.ai_generated_content;
+  const aiObject = asObject(aiRaw);
+  const aiAnswer = cleanText(
+    typeof aiRaw === "string"
+      ? aiRaw
+      : aiObject.answer
+  );
+  const aiTexts = cleanText(aiObject.texts);
+  const aiImages = cleanText(aiObject.images);
+  const aiTranslations = cleanText(aiObject.translations);
+  const aiAllowedText = new Set(["none","some_minimal","some_extensive","entire_minimal","entire_extensive"]);
+  const aiAllowedImages = new Set(["none","few_minimal","few_extensive","many_minimal","many_extensive"]);
 
   if (!manuscriptPresent) {
     errors["content.manuscript"] = "Upload your manuscript.";
@@ -1114,6 +1127,22 @@ function validateContentData(
     errors["content.cover"] = "Choose a cover option.";
   } else if (coverOption === "upload_cover_file" && !coverPresent) {
     errors["content.cover"] = "Upload your book cover file.";
+  }
+
+  if (!aiAnswer) {
+    errors["content.ai_content"] = "Answer the AI-generated content question.";
+  } else if (aiAnswer === "yes") {
+    const complete = aiAllowedText.has(aiTexts)
+      && aiAllowedImages.has(aiImages)
+      && aiAllowedText.has(aiTranslations);
+    const allNone = aiTexts === "none"
+      && aiImages === "none"
+      && aiTranslations === "none";
+    if (!complete || allNone) {
+      errors["content.ai_content"] = "Specify what type of content was AI generated. If none, select “No”.";
+    }
+  } else if (aiAnswer !== "no") {
+    errors["content.ai_content"] = "Answer the AI-generated content question.";
   }
 
   if (!accessibility) {
