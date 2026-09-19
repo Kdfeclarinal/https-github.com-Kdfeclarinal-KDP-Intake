@@ -28,6 +28,14 @@ Deno.serve(async (request) => {
       listItems: async (roundId: string) => { const { data, error } = await supabase.from('book_review_items').select('*').eq('review_round_id', roundId); if (error) throw error; return data || [] },
       listComments: async (roundId: string) => { const { data, error } = await supabase.from('book_review_comments').select('*').eq('review_round_id', roundId).is('deleted_at', null); if (error) throw error; return data || [] },
       listRounds: async (bookId: string) => { const { data, error } = await supabase.from('book_review_rounds').select('id,round_number,status,outcome,finalized_at').eq('book_id', bookId).order('round_number', { ascending: false }); if (error) throw error; return data || [] },
+      listSnapshotFiles: async (fileIds: string[]) => {
+        if (!fileIds.length) return []
+        const { data, error } = await supabase.from('book_files')
+          .select('id,reviewstudio_file_id,reviewstudio_file_url')
+          .in('id', fileIds)
+        if (error) throw error
+        return data || []
+      },
       listContinuations: async (roundId: string) => {
         const { data: threads, error: threadError } = await supabase.from('book_review_update_threads')
           .select('id,target_comment_id,target_review_item_id,source_round_number,request_body_snapshot,request_number_snapshot,reviewer_name_snapshot,requested_at,ready_via_reply,ready_via_change,ready_via_file_change,ready_at,readiness_evidence')
