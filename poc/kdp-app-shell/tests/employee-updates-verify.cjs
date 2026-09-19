@@ -32,6 +32,8 @@ function payload({ reopened = false, replied = false } = {}) {
     step_name: 'details',
     progress_state: progress,
     employee_revision: reopened || replied ? 5 : 4,
+    employee_mode: 'employee_updates',
+    can_edit: true,
     employee_update: {
       updateCycleId: 'cycle-1',
       roundNumber: 2,
@@ -61,6 +63,7 @@ function payload({ reopened = false, replied = false } = {}) {
   let reopenRequest = null;
   let replyRequest = null;
 
+  await page.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'book-1', session_token: 'kdp_es_employee_updates', expires_at: '2099-01-01T00:00:00Z' }) }));
   await page.route('**/functions/v1/loadEmployeePage', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
