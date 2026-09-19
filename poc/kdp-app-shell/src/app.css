@@ -2852,9 +2852,10 @@ a.kdp-btn:focus {
   top: 10px;
   min-width: 0;
   min-height: min(760px, calc(100vh - 20px));
-  border: 1px solid #bfc5c5;
+  margin-top: 108px;
+  border: 1px solid #c7cccc;
   background: #fff;
-  box-shadow: 0 3px 12px rgba(15, 17, 17, 0.14);
+  box-shadow: none;
 }
 
 .kdp-review-panel__tabs {
@@ -3320,7 +3321,30 @@ a.kdp-btn:focus {
   align-content: start;
   gap: 18px;
   min-height: 420px;
+  margin-top: 48px;
   padding: 22px;
+  box-shadow: none;
+}
+
+.kdp-admin-review-skeleton-title {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+}
+
+.kdp-admin-review-skeleton-section {
+  grid-template-columns: 150px minmax(0, 1fr) 148px;
+  column-gap: 20px;
+}
+
+.kdp-admin-review-skeleton-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.kdp-admin-review--loading .kdp-skel-progress {
+  margin-top: 8px;
 }
 
 .kdp-review-continuation {
@@ -3386,6 +3410,7 @@ a.kdp-btn:focus {
     position: static;
     order: -1;
     min-height: auto;
+    margin-top: 0;
     margin-bottom: 8px;
   }
 
