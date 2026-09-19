@@ -1920,6 +1920,46 @@ a.kdp-btn:focus {
   gap: 12px;
 }
 
+.kdp-choice-row--stacked {
+  display: block;
+}
+
+.kdp-choice-row--stacked > .kdp-radio {
+  padding: 0;
+}
+
+.kdp-ai-detail-grid {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 2px 28px;
+}
+
+.kdp-ai-detail-row {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.kdp-ai-detail-row .kdp-label {
+  margin: 0;
+}
+
+.kdp-ai-detail-row .kdp-select {
+  width: 100%;
+}
+
+.kdp-ai-detail-grid--readonly {
+  margin-left: 0;
+}
+
+@media (max-width: 620px) {
+  .kdp-ai-detail-row {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+}
+
 /* Content page vertical rhythm — same shell as Details, but the Content
    controls need more breathing room between labelled controls and sections. */
 .kdp-app--content .kdp-field {
