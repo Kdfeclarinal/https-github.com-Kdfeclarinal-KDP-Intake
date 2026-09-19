@@ -25,7 +25,7 @@ function safeHttpsUrl(value: unknown) {
 }
 
 function safeFile(row: Row) {
-  const url = safeHttpsUrl(row.download_url || row.reviewstudio_file_url)
+  const url = safeHttpsUrl(row.metadata?.reviewstudio_response?.url || row.download_url || row.reviewstudio_file_url)
   const previewUrl = safeHttpsUrl(row.metadata?.reviewstudio_response?.thumbnail_url)
   return { fileType: String(row.file_type || ''), fileName: String(row.file_name || ''), url, previewUrl }
 }
