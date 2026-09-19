@@ -132,3 +132,53 @@ test('historical response preserves finalized attribution and safe file version 
   assert.equal(result.body.reviewRound.snapshotIdentity, 'round-1-schema-2');
   assert.deepEqual(result.body.files, [{ fileName: 'manuscript.docx', fileType: 'manuscript', versionNumber: 3, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', fileSizeBytes: 4096, createdAt: '2026-09-13T10:00:00Z' }]);
 });
+
+
+test('submitted step payload preserves employee-facing values without storage metadata', async () => {
+  const result = await resolvePrivilegedAdminReview(deps({
+    findRound: async () => ({
+      id: 'round-1',
+      book_id: 'book-1',
+      round_number: 1,
+      status: 'submitted',
+      reviewer_user_id: 'reviewer-1',
+      revision: 7,
+      submission_snapshot: {
+        files: [],
+        steps: {
+          details: {
+            state_json: {
+              sections: {
+                language: { value: 'english', sectionKey: 'language', storageStrategy: 'page_json', wrapperSelector: '#private' },
+                book_title: { value: 'Visible Title', sectionKey: 'book_title', booksColumn: 'book_title' },
+                subtitle: { value: 'Visible Subtitle', sectionKey: 'subtitle' },
+                primary_author: { value: 'Ada Author', fields: { author_first_name: 'Ada', author_last_name: 'Author' }, sectionKey: 'primary_author' },
+                publishing_rights: { value: 'copyright_owner', label: 'I own the copyright', sectionKey: 'publishing_rights' },
+                adult_question: { value: 'no', label: 'No', sectionKey: 'adult_question' },
+                age_grade_range: { value: { reading_age_min: '8', reading_age_max: '12' }, fields: { reading_age_min: '8', reading_age_max: '12' } },
+              },
+            },
+          },
+          content: {
+            state_json: { sections: { ai_content: { value: 'no' }, accessibility: { value: 'all' } } },
+          },
+          pricing: {
+            state_json: { sections: { kdp_select: { enrolled: true }, royalty_and_pricing: { royaltyPlan: '35', marketplaces: [] } } },
+          },
+        },
+      },
+    }),
+  }), 'book-1');
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.submittedSteps.details.book_title, 'Visible Title');
+  assert.equal(result.body.submittedSteps.details.subtitle, 'Visible Subtitle');
+  assert.deepEqual(result.body.submittedSteps.details.author, { value: 'Ada Author', firstName: 'Ada', lastName: 'Author' });
+  assert.equal(result.body.submittedSteps.details.primaryAudience.adult, 'no');
+  assert.deepEqual(result.body.submittedSteps.details.primaryAudience.age, { min: '8', max: '12' });
+  assert.equal(result.body.submittedSteps.content.aiGenerated, 'no');
+  assert.equal(result.body.submittedSteps.pricing.kdpSelect.enrolled, true);
+  assert.equal(JSON.stringify(result.body.submittedSteps).includes('storageStrategy'), false);
+  assert.equal(JSON.stringify(result.body.submittedSteps).includes('wrapperSelector'), false);
+  assert.equal(JSON.stringify(result.body.submittedSteps).includes('booksColumn'), false);
+});
