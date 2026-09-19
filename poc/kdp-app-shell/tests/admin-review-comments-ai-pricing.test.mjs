@@ -41,3 +41,10 @@ test('pricing UI derives KDP file size from the authoritative manuscript and lab
   assert.match(pricingPage, /effectiveRoyaltyPlan/);
   assert.match(pricingPage, /Applicable VAT\/tax is customer-jurisdiction dependent and is not guessed here/);
 });
+
+
+test('legacy AI yes/no remains byte-shape compatible until the AI section is edited', () => {
+  assert.match(contentPage, /aiLegacyValue/);
+  assert.match(contentPage, /s\.aiLegacyValue === answer && !hasDetails/);
+  assert.match(contentPage, /allowLegacyAiYes: aiUpdateState\.locked/);
+});
