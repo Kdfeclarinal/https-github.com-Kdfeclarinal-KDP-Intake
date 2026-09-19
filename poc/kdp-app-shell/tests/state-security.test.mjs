@@ -68,6 +68,7 @@ test('Content draft extracted fields preserve unanswered choices as null', () =>
   }), {
     drm: null,
     cover_option: null,
+    ai_generated_content: null,
     accessibility: null,
   });
 });
@@ -76,20 +77,53 @@ test('complete Content extracted fields use the deployed validation vocabulary',
   assert.deepEqual(serializeContentExtractedFields({
     drmChoice: 'yes',
     coverOption: 'upload',
+    aiChoice: 'yes',
+    aiTexts: 'some_minimal',
+    aiImages: 'none',
+    aiTranslations: 'none',
     accessibleImages: 'all',
   }), {
     drm: 'yes_apply_drm',
     cover_option: 'upload_cover_file',
+    ai_generated_content: {
+      answer: 'yes',
+      texts: 'some_minimal',
+      images: 'none',
+      translations: 'none',
+    },
     accessibility: 'all',
   });
 
   assert.deepEqual(serializeContentExtractedFields({
     drmChoice: 'no',
     coverOption: 'cover_creator',
+    aiChoice: 'no',
     accessibleImages: 'dont_know',
   }), {
     drm: 'no_do_not_apply_drm',
     cover_option: 'cover_creator',
+    ai_generated_content: {
+      answer: 'no',
+      texts: null,
+      images: null,
+      translations: null,
+    },
     accessibility: 'dont_know',
+  });
+});
+
+
+test('structured AI disclosure preserves Select as unanswered and explicit None choices', () => {
+  const partial = serializeContentExtractedFields({
+    aiChoice: 'yes',
+    aiTexts: '',
+    aiImages: 'none',
+    aiTranslations: 'none',
+  });
+  assert.deepEqual(partial.ai_generated_content, {
+    answer: 'yes',
+    texts: '',
+    images: 'none',
+    translations: 'none',
   });
 });
