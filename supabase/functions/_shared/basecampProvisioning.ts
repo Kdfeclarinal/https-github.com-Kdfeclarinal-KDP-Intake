@@ -95,9 +95,10 @@ export async function provisionEmployeeIntake(deps: Row) {
             `<div><small>Internal reference: ${escapeHtml(marker)}</small></div>`,
           assignee_ids: [Number(deps.employeePersonId)],
         };
-        // The canonical due date is stored on the book. Do not guess a provider
-        // field for Basecamp here: the exact create-todo due-date property must
-        // be verified against current Basecamp API documentation before sending it.
+        // Basecamp v3 create-todo accepts an ISO calendar date in due_on.
+        // Keep the canonical Supabase value authoritative and mirror the already
+        // resolved per-book date downstream without recalculating it.
+        if (dueDate) payload.due_on = dueDate;
         const created = await deps.createTodo(listId, payload);
         if (!created?.id) throw new BasecampError(502, "Basecamp returned an invalid KDP Pre-Press task.");
         todoId = String(created.id);
