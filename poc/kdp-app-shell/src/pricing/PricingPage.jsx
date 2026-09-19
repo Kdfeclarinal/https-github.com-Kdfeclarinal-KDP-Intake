@@ -39,7 +39,7 @@ function dirtySnapshot(state) {
   return JSON.stringify({ kdpSelect: state.kdpSelect, territoryMode: state.territoryMode, selectedTerritories: state.selectedTerritories, royaltyPlan: state.royaltyPlan, primaryListPrice: state.primaryListPrice, marketplaces: state.marketplaces.map(({ id, listPrice, manualOverride }) => ({ id, listPrice, manualOverride })) });
 }
 
-export function PricingPage({ book, bookId, accessToken, savedState, initialProgress, onNavigate, files, employeeUpdate, employeeRevision, onConcurrencyConflict }) {
+export function PricingPage({ book, bookId, accessToken, savedState, initialProgress, onNavigate, files, employeeUpdate, employeeRevision, onConcurrencyConflict, onSubmitted }) {
   const [state, setState] = React.useState(() => hydratePricingState(savedState, book));
   const baselineRef = React.useRef(dirtySnapshot(state));
   const [progress, setProgress] = React.useState(() => progressFromServer(initialProgress));
@@ -110,6 +110,7 @@ export function PricingPage({ book, bookId, accessToken, savedState, initialProg
       if (response.status === 409) { setOverlay(null); setFeedback({ kind: 'error', text: 'This book changed elsewhere. The latest version is being loaded.' }); onConcurrencyConflict?.(); return; }
       if (!response.ok || !data || data.ok !== true) throw new Error('submit_failed');
       setSubmitted(true); setOverlay('done'); setFeedback({ kind: 'ok', text: employeeUpdate ? 'Updates submitted for re-review.' : 'Submitted for approval.' });
+      onSubmitted?.();
       window.setTimeout(() => setOverlay(null), window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 300 : 650);
     } catch {
       setOverlay(null); setFeedback({ kind: 'error', text: employeeUpdate ? 'The book is not ready for re-review.' : 'The book could not be submitted for approval. Please try again.' });
