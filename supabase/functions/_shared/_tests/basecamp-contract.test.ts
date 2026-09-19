@@ -303,7 +303,7 @@ test("provisioning persists each mapping and known success never duplicates", as
     reference: { id: "ref-1", provisioning_status: "pending", todo_list_id: null, todo_id: null },
     reconcileList: async () => null, reconcileTodo: async () => null,
     createTodoList: async () => { creates.push("list"); return { id: 11 }; },
-    createTodo: async (_listId, payload) => { creates.push("todo"); assertEquals(payload.assignee_ids, [1]); assertEquals(payload.content, "KDP Pre-Press — Stage 1"); assertEquals(payload.due_on, "2026-09-26"); return { id: 22 }; },
+    createTodo: async (_listId, payload) => { creates.push("todo"); assertEquals(payload.assignee_ids, [1]); assertEquals(payload.content, "KDP Pre-Press — Stage 1"); assert.match(payload.description, /Due:<\/strong> 2026-09-26/); assertEquals("due_on" in payload, false); return { id: 22 }; },
     updateReference: async (patch) => { updates.push(patch); },
   });
   assertEquals(creates, ["list", "todo"]);
