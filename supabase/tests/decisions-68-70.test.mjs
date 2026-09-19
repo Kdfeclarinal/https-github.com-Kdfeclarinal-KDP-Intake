@@ -54,3 +54,12 @@ test('new create-book overload is service-role only', () => {
   assert.match(migration, /revoke all on function public\.create_privileged_kdp_book\([\s\S]*?from public,anon,authenticated/i);
   assert.match(migration, /grant execute on function public\.create_privileged_kdp_book\([\s\S]*?to service_role/i);
 });
+
+
+test('Decision 70 mirrors the stored Stage 1 due date to Basecamp without recalculation', () => {
+  const provisioning = readFileSync(
+    new URL('../functions/_shared/basecampProvisioning.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(provisioning, /payload\.due_on\s*=\s*dueDate/i);
+});
