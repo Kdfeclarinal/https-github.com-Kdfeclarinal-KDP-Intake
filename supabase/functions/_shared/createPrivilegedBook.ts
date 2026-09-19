@@ -21,11 +21,17 @@ export async function createPrivilegedBook(deps: Row) {
   const reviewer = (deps.reviewers || []).find((item: Row) => String(item.id) === String(deps.reviewerUserId));
   if (!reviewer) throw new BasecampError(422, "Select an eligible reviewer.");
 
+  const bookAuthor = String(deps.bookAuthor || "").trim();
+  if (!bookAuthor || bookAuthor.length > 300) throw new BasecampError(422, "Book Author is required.");
+  const dueDate = String(deps.dueDate || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new BasecampError(422, "Select a valid due date.");
+
   const rawToken = (deps.tokenFactory || generateOpaqueToken)();
   const tokenHash = await (deps.hashToken || sha256Token)(rawToken);
   const canonical = await deps.createCanonicalBook({
     bookFormat: "kindle_ebook", overallStatus: "draft", employeePersonId: String(employee.id),
     employeeName: employee.displayName, reviewerUserId: String(reviewer.id), actorUserId: deps.actor.id,
+    bookAuthor, dueDate, dueDateSource: deps.dueDateSource === "override" ? "override" : "default",
     tokenHash, tokenPrefix: rawToken.slice(0, 12), source: "privileged_create_book",
   });
 
