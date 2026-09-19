@@ -101,6 +101,7 @@ test("response: employee file omits provider topology and metadata", () => {
     file_status: "complete",
     reviewstudio_file_url: "https://rs.example/view",
     preview_url: "https://storage.example/preview",
+    file_size: 6619771,
     created_at: "2026-09-01T00:00:00Z",
     updated_at: "2026-09-02T00:00:00Z",
     reviewstudio_project_id: "project-secret-topology",
@@ -110,6 +111,7 @@ test("response: employee file omits provider topology and metadata", () => {
   });
   assert(file.reviewstudio_file_url === "https://rs.example/view", "UI URL retained");
   assert(file.preview_url === "https://storage.example/preview", "preview retained");
+  assert(file.file_size === 6619771, "file size retained for pricing estimates");
   assert(!("metadata" in file), "metadata omitted");
   assert(!("reviewstudio_project_id" in file), "project id omitted");
   assert(!("reviewstudio_review_id" in file), "review id omitted");
