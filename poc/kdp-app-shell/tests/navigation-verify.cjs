@@ -34,6 +34,28 @@ function pagePayload(step, contentState = completedContent) { return { ok: true,
     await clean.close();
   }
 
+  const submitted = await context.newPage();
+  await submitted.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'submitted-book', session_token: 'kdp_es_submitted', expires_at: '2099-01-01T00:00:00Z' }) }));
+  await submitted.route('**/functions/v1/loadEmployeePage', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      book: { book_title: 'Submitted Book', overall_status: 'AWAITING_REVIEW' },
+      step_name: 'pricing',
+      progress_state: unlocked,
+      files: [],
+      employee_mode: 'submitted',
+      can_edit: false,
+    }),
+  }));
+  await submitted.goto(`${BASE}/?book_id=submitted-book&access_token=launcher-secret&step=pricing`);
+  await submitted.getByRole('heading', { name: 'Submitted for Review' }).waitFor();
+  check(!new URL(submitted.url()).searchParams.has('access_token'), 'submitted employee link removes launcher credential from visible URL');
+  check(await submitted.locator('.kdp-form, .kdp-app--content, .kdp-app--pricing').count() === 0, 'submitted mode exposes no employee mutation form');
+  check(await submitted.getByRole('button', { name: /Save|Submit|Upload/i }).count() === 0, 'submitted mode exposes no save, submit, or upload action');
+  await submitted.close();
+
   const details = await context.newPage(); await wire(details);
   await details.goto(`${BASE}/?book_id=b&access_token=t&step=details`); await details.waitForSelector('.kdp-app:not(.kdp-app--content):not(.kdp-app--pricing)');
   await details.locator('#kdp-title').fill('Changed title'); await details.locator('.kdp-progress-item[data-step="content"]').click();
