@@ -11,6 +11,7 @@ function pagePayload(step, contentState = completedContent) { return { ok: true,
   const context = await browser.newContext({ viewport: { width: 1100, height: 850 } });
   const saves = [];
   async function wire(page, contentState = completedContent) {
+    await page.route('**/functions/v1/exchangeEmployeeAccess', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, book_id: 'b', session_token: 'kdp_es_navigation', expires_at: '2099-01-01T00:00:00Z' }) }));
     await page.route('**/functions/v1/loadEmployeePage', (route) => { const body = JSON.parse(route.request().postData() || '{}'); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(pagePayload(body.step_name, contentState)) }); });
     await page.route('**/functions/v1/loadPricingFxRates', (route) => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false }) }));
     await page.route('**/functions/v1/saveEmployeeStep', (route) => { const body = JSON.parse(route.request().postData() || '{}'); saves.push(body); route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data_valid: true, progress_state: unlocked }) }); });
