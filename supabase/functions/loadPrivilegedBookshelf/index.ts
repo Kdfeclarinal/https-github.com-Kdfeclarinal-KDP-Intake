@@ -10,7 +10,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
   status,
   headers: { ...CORS, 'Content-Type': 'application/json' },
 })
-const BOOK_FIELDS = 'id,book_title,primary_author_name,overall_status,updated_at,created_at,assigned_reviewer_user_id,reviewer_assignment_revision,latest_review_round_id,employee_basecamp_person_id,employee_name,employee_revision,deleted_at,deleted_by_privileged_user_id,trash_revision,basecamp_references(reference_kind,review_round_id,provisioning_status),integration_events(event_type,status,created_at)'
+const BOOK_FIELDS = 'id,book_title,book_author_name,primary_author_name,overall_status,updated_at,created_at,assigned_reviewer_user_id,reviewer_assignment_revision,latest_review_round_id,employee_basecamp_person_id,employee_name,employee_revision,deleted_at,deleted_by_privileged_user_id,trash_revision,basecamp_references(reference_kind,review_round_id,provisioning_status),integration_events(event_type,status,created_at)'
 const positiveHours = (value: string | undefined) => { const number = Number(value); return Number.isFinite(number) && number > 0 ? number : null }
 
 Deno.serve(async (request) => {
