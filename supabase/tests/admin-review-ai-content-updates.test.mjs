@@ -38,3 +38,10 @@ test('terminal CAS advances revision before the round becomes immutable', () => 
   const finalizerCall = revisionMigration.indexOf('v_result := public.finalize_kdp_review_round');
   assert.ok(revisionUpdate >= 0 && finalizerCall > revisionUpdate);
 });
+
+
+test('legacy AI yes is grandfathered only while that approved section remains locked', () => {
+  assert.match(saveSource, /existingAiValue === "yes"/);
+  assert.match(saveSource, /!aiSectionEditable/);
+  assert.match(saveSource, /allowLegacyAiYes && typeof aiRaw === "string"/);
+});
